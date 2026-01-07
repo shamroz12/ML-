@@ -9,10 +9,20 @@ import py3Dmol
 import streamlit.components.v1 as components
 
 # =========================
-# Load model and features
+# Page config
 # =========================
-model = joblib.load("epitope_xgboost_model.pkl")
-feature_columns = joblib.load("feature_columns.pkl")
+st.set_page_config(page_title="Epitope Prioritization Platform", layout="wide")
+
+# =========================
+# Load model and features (cached)
+# =========================
+@st.cache_resource
+def load_model():
+    model = joblib.load("epitope_xgboost_model.pkl")
+    feature_columns = joblib.load("feature_columns.pkl")
+    return model, feature_columns
+
+model, feature_columns = load_model()
 
 # =========================
 # Constants
@@ -63,7 +73,7 @@ def extract_features(seq):
     dp = dipeptide_composition(seq)
     pc = physchem(seq)
     feats = aa + dp + pc
-    return pd.DataFrame([feats], columns=feature_columns)
+    return feats
 
 # =========================
 # FASTA parser
@@ -78,16 +88,16 @@ def read_fasta(text):
 # =========================
 def remove_overlaps(df):
     selected = []
-    used_positions = set()
+    used = set()
 
     for _, row in df.iterrows():
         start = row["Start_Position"]
         end = row["End_Position"]
 
-        if all(pos not in used_positions for pos in range(start, end+1)):
+        if all(p not in used for p in range(start, end+1)):
             selected.append(row)
-            for pos in range(start, end+1):
-                used_positions.add(pos)
+            for p in range(start, end+1):
+                used.add(p)
 
     return pd.DataFrame(selected)
 
@@ -110,12 +120,10 @@ def show_3d_structure(pdb_text, highlight_ranges):
     components.html(html, height=600, width=800)
 
 # =========================
-# Streamlit UI
+# UI
 # =========================
-st.set_page_config(page_title="Epitope Prioritization Tool", layout="wide")
-
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("Machine-learning based integrated epitope screening and prioritization.")
+st.write("Fast machine-learning based integrated epitope screening and prioritization.")
 
 fasta_input = st.text_area("Paste FASTA sequence here:")
 
@@ -134,7 +142,6 @@ elif threshold_mode == "Balanced (0.3)":
 else:
     TH = 0.25
 
-# New filters
 top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100, 200])
 score_cutoff = st.slider("Minimum ML score cutoff:", 0.0, 1.0, float(TH), 0.01)
 remove_overlap_flag = st.checkbox("Remove overlapping peptides (recommended)", value=True)
@@ -155,19 +162,37 @@ if st.button("🔍 Predict Epitopes"):
                     peptides.append(pep)
                     positions.append(i+1)
 
-        st.write(f"Generated {len(peptides)} candidate peptides from protein scan.")
+        st.write(f"🔬 Scanning protein: generated {len(peptides)} candidate peptides.")
 
-        results = []
+        # =========================
+        # FAST BATCH FEATURE EXTRACTION
+        # =========================
+        with st.spinner("⚡ Computing features and predicting scores..."):
+            progress = st.progress(0)
 
-        for pep, pos in zip(peptides, positions):
-            Xf = extract_features(pep)
-            prob = model.predict_proba(Xf)[0,1]
-            results.append([pep, pos, len(pep), prob])
+            feature_rows = []
+            total = len(peptides)
 
-        df_res = pd.DataFrame(
-            results,
-            columns=["Peptide", "Start_Position", "Length", "Score"]
-        )
+            for i, pep in enumerate(peptides):
+                feature_rows.append(extract_features(pep))
+                if i % 100 == 0:
+                    progress.progress(i / total)
+
+            progress.progress(1.0)
+
+            X_all = pd.DataFrame(feature_rows, columns=feature_columns)
+
+            # =========================
+            # FAST BATCH PREDICTION
+            # =========================
+            probs = model.predict_proba(X_all)[:,1]
+
+        df_res = pd.DataFrame({
+            "Peptide": peptides,
+            "Start_Position": positions,
+            "Length": [len(p) for p in peptides],
+            "Score": probs
+        })
 
         df_res["End_Position"] = df_res["Start_Position"] + df_res["Length"] - 1
 
@@ -214,6 +239,5 @@ if st.button("🔍 Predict Epitopes"):
             if st.button("🧬 Show 3D Structure with Highlighted Epitopes"):
                 show_3d_structure(pdb_text, highlight_ranges)
 
-        # Optional: show full table
         with st.expander("📊 Show all scored peptides (advanced users)"):
             st.dataframe(df_res)
