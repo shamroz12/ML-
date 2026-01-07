@@ -74,6 +74,24 @@ def read_fasta(text):
     return seq.upper()
 
 # =========================
+# Overlap filter
+# =========================
+def remove_overlaps(df):
+    selected = []
+    used_positions = set()
+
+    for _, row in df.iterrows():
+        start = row["Start_Position"]
+        end = row["End_Position"]
+
+        if all(pos not in used_positions for pos in range(start, end+1)):
+            selected.append(row)
+            for pos in range(start, end+1):
+                used_positions.add(pos)
+
+    return pd.DataFrame(selected)
+
+# =========================
 # 3D Structure Viewer
 # =========================
 def show_3d_structure(pdb_text, highlight_ranges):
@@ -97,7 +115,7 @@ def show_3d_structure(pdb_text, highlight_ranges):
 st.set_page_config(page_title="Epitope Prioritization Tool", layout="wide")
 
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("Upload or paste a protein FASTA sequence and get ranked epitope predictions.")
+st.write("Machine-learning based integrated epitope screening and prioritization.")
 
 fasta_input = st.text_area("Paste FASTA sequence here:")
 
@@ -116,6 +134,11 @@ elif threshold_mode == "Balanced (0.3)":
 else:
     TH = 0.25
 
+# New filters
+top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100, 200])
+score_cutoff = st.slider("Minimum ML score cutoff:", 0.0, 1.0, float(TH), 0.01)
+remove_overlap_flag = st.checkbox("Remove overlapping peptides (recommended)", value=True)
+
 if st.button("🔍 Predict Epitopes"):
     if len(fasta_input.strip()) == 0:
         st.error("Please paste a FASTA sequence.")
@@ -132,37 +155,45 @@ if st.button("🔍 Predict Epitopes"):
                     peptides.append(pep)
                     positions.append(i+1)
 
-        st.write(f"Generated {len(peptides)} candidate peptides.")
+        st.write(f"Generated {len(peptides)} candidate peptides from protein scan.")
 
         results = []
 
         for pep, pos in zip(peptides, positions):
             Xf = extract_features(pep)
             prob = model.predict_proba(Xf)[0,1]
-            pred = int(prob >= TH)
-            results.append([pep, pos, len(pep), prob, pred])
+            results.append([pep, pos, len(pep), prob])
 
         df_res = pd.DataFrame(
             results,
-            columns=["Peptide", "Start_Position", "Length", "Score", "Predicted"]
+            columns=["Peptide", "Start_Position", "Length", "Score"]
         )
 
+        df_res["End_Position"] = df_res["Start_Position"] + df_res["Length"] - 1
+
+        # Sort by score
         df_res = df_res.sort_values(by="Score", ascending=False)
 
-        # Filter positives
-        df_hits = df_res[df_res["Predicted"] == 1].copy()
-        df_hits["End_Position"] = df_hits["Start_Position"] + df_hits["Length"] - 1
+        # Apply score cutoff
+        df_res = df_res[df_res["Score"] >= score_cutoff]
 
-        st.subheader("✅ Predicted Epitopes")
-        st.write(f"Found {len(df_hits)} predicted epitopes at threshold {TH}")
+        # Remove overlaps if requested
+        if remove_overlap_flag:
+            df_res = remove_overlaps(df_res)
+
+        # Keep only top N
+        df_hits = df_res.head(top_n)
+
+        st.subheader("✅ Final Prioritized Epitope Candidates")
+        st.write(f"Showing top {len(df_hits)} peptides after ML screening and filtering.")
         st.dataframe(df_hits)
 
         # Download
         csv = df_hits.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "⬇️ Download Results as CSV",
+            "⬇️ Download Final Candidates as CSV",
             csv,
-            "predicted_epitopes.csv",
+            "final_prioritized_epitopes.csv",
             "text/csv"
         )
 
@@ -183,5 +214,6 @@ if st.button("🔍 Predict Epitopes"):
             if st.button("🧬 Show 3D Structure with Highlighted Epitopes"):
                 show_3d_structure(pdb_text, highlight_ranges)
 
-        st.subheader("📊 All Candidates (Including Negatives)")
-        st.dataframe(df_res)
+        # Optional: show full table
+        with st.expander("📊 Show all scored peptides (advanced users)"):
+            st.dataframe(df_res)
