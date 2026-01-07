@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import joblib
 from itertools import product
+import py3Dmol
+import streamlit.components.v1 as components
 
 # =========================
 # Load model and features
@@ -16,7 +18,6 @@ feature_columns = joblib.load("feature_columns.pkl")
 # Constants
 # =========================
 amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
-aa_to_index = {aa:i for i,aa in enumerate(amino_acids)}
 dipeptides = [a+b for a,b in product(amino_acids, repeat=2)]
 
 # Physicochemical tables
@@ -71,6 +72,24 @@ def read_fasta(text):
     lines = text.strip().splitlines()
     seq = "".join([l.strip() for l in lines if not l.startswith(">")])
     return seq.upper()
+
+# =========================
+# 3D Structure Viewer
+# =========================
+def show_3d_structure(pdb_text, highlight_ranges):
+    view = py3Dmol.view(width=800, height=600)
+    view.addModel(pdb_text, "pdb")
+    view.setStyle({"cartoon": {"color": "lightgray"}})
+
+    for (start, end) in highlight_ranges:
+        view.addStyle(
+            {"resi": list(range(int(start), int(end)+1))},
+            {"stick": {"color": "red"}}
+        )
+
+    view.zoomTo()
+    html = view._make_html()
+    components.html(html, height=600, width=800)
 
 # =========================
 # Streamlit UI
@@ -131,7 +150,8 @@ if st.button("🔍 Predict Epitopes"):
         df_res = df_res.sort_values(by="Score", ascending=False)
 
         # Filter positives
-        df_hits = df_res[df_res["Predicted"] == 1]
+        df_hits = df_res[df_res["Predicted"] == 1].copy()
+        df_hits["End_Position"] = df_hits["Start_Position"] + df_hits["Length"] - 1
 
         st.subheader("✅ Predicted Epitopes")
         st.write(f"Found {len(df_hits)} predicted epitopes at threshold {TH}")
@@ -145,6 +165,23 @@ if st.button("🔍 Predict Epitopes"):
             "predicted_epitopes.csv",
             "text/csv"
         )
+
+        # =========================
+        # 3D STRUCTURE VISUALIZATION
+        # =========================
+        st.subheader("🧬 3D Structure Visualization")
+
+        pdb_file = st.file_uploader("Upload PDB structure file (from AlphaFold or PDB):", type=["pdb"])
+
+        if pdb_file is not None and len(df_hits) > 0:
+            pdb_text = pdb_file.read().decode("utf-8")
+
+            highlight_ranges = list(
+                zip(df_hits["Start_Position"], df_hits["End_Position"])
+            )
+
+            if st.button("🧬 Show 3D Structure with Highlighted Epitopes"):
+                show_3d_structure(pdb_text, highlight_ranges)
 
         st.subheader("📊 All Candidates (Including Negatives)")
         st.dataframe(df_res)
