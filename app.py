@@ -10,16 +10,15 @@ from itertools import product
 st.set_page_config(page_title="Integrated Epitope Prioritization Platform", layout="wide")
 
 # =========================
-# Load models
+# Load model
 # =========================
 @st.cache_resource
-def load_models():
-    tcell_model = joblib.load("models/tcell_xgb.pkl")
-    bcell_model = joblib.load("models/bcell_xgb.pkl")
-    feature_columns = joblib.load("models/feature_columns.pkl")
-    return tcell_model, bcell_model, feature_columns
+def load_model():
+    model = joblib.load("epitope_xgboost_model.pkl")
+    feature_columns = joblib.load("feature_columns.pkl")
+    return model, feature_columns
 
-tcell_model, bcell_model, feature_columns = load_models()
+model, feature_columns = load_model()
 
 # =========================
 # Constants
@@ -39,7 +38,7 @@ hydro = {
 }
 
 # =========================
-# Feature extraction
+# Feature functions
 # =========================
 def aa_composition(seq):
     L = len(seq)
@@ -71,7 +70,19 @@ def extract_features(seq):
     return aa + dp + [len(seq), mw, hyd, aromatic]
 
 # =========================
-# FASTA
+# Screening proxies
+# =========================
+def toxicity_proxy(seq):
+    hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
+    return "High" if hyd_val > 2.5 else "Low"
+
+def allergenicity_proxy(seq):
+    aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
+    cysteine_frac = seq.count("C") / len(seq)
+    return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
+
+# =========================
+# FASTA parser
 # =========================
 def read_fasta(text):
     lines = text.strip().splitlines()
@@ -79,65 +90,116 @@ def read_fasta(text):
     return seq.upper()
 
 # =========================
+# Remove overlaps
+# =========================
+def remove_overlaps(df):
+    selected = []
+    used = set()
+    for _, row in df.iterrows():
+        start = row["Start_Position"]
+        end = row["End_Position"]
+        if all(p not in used for p in range(start, end+1)):
+            selected.append(row)
+            for p in range(start, end+1):
+                used.add(p)
+    return pd.DataFrame(selected)
+
+# =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
+st.write("Machine-learning based epitope prediction, screening, and prioritization.")
 
-prediction_type = st.selectbox("Prediction Type:", ["T-cell Epitope", "B-cell Epitope"])
-model = tcell_model if prediction_type == "T-cell Epitope" else bcell_model
+fasta_input = st.text_area("Paste FASTA sequence here:")
 
-fasta_input = st.text_area("Paste FASTA sequence:")
+min_len = st.slider("Minimum peptide length", 8, 15, 9)
+max_len = st.slider("Maximum peptide length", 9, 25, 15)
 
-min_len = st.slider("Min peptide length", 8, 15, 9)
-max_len = st.slider("Max peptide length", 9, 25, 15)
+threshold_mode = st.selectbox(
+    "Prediction mode:",
+    ["Strict (0.5)", "Balanced (0.3)", "Sensitive (0.25)"]
+)
 
-top_n = st.selectbox("Show top N peptides", [5, 10, 20, 50])
+TH = 0.5 if threshold_mode=="Strict (0.5)" else 0.3 if threshold_mode=="Balanced (0.3)" else 0.25
 
-pdb_id = st.text_input("PDB ID (RCSB or AlphaFold ID):")
+top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100, 200])
+score_cutoff = st.slider("Minimum ML score cutoff:", 0.0, 1.0, float(TH), 0.01)
+remove_overlap_flag = st.checkbox("Remove overlapping peptides", value=True)
 
 # =========================
 # Predict
 # =========================
 if st.button("🔍 Predict Epitopes"):
+    if len(fasta_input.strip()) == 0:
+        st.error("Please paste a FASTA sequence.")
+    else:
+        seq = read_fasta(fasta_input)
 
-    seq = read_fasta(fasta_input)
+        peptides = []
+        positions = []
 
-    peptides, positions = [], []
-    for L in range(min_len, max_len+1):
-        for i in range(len(seq)-L+1):
-            pep = seq[i:i+L]
-            if set(pep).issubset(set(amino_acids)):
-                peptides.append(pep)
-                positions.append(i+1)
+        for L in range(min_len, max_len+1):
+            for i in range(len(seq) - L + 1):
+                pep = seq[i:i+L]
+                if set(pep).issubset(set(amino_acids)):
+                    peptides.append(pep)
+                    positions.append(i+1)
 
-    feats = [extract_features(p) for p in peptides]
-    X = pd.DataFrame(feats, columns=feature_columns)
-    probs = model.predict_proba(X)[:,1]
+        st.write(f"🔬 Generated {len(peptides)} peptides.")
 
-    df = pd.DataFrame({
-        "Peptide": peptides,
-        "Start": positions,
-        "Length": [len(p) for p in peptides],
-        "Score": probs
-    })
+        with st.spinner("⚡ Predicting..."):
+            feats = [extract_features(p) for p in peptides]
+            X_all = pd.DataFrame(feats, columns=feature_columns)
+            probs = model.predict_proba(X_all)[:,1]
 
-    df["End"] = df["Start"] + df["Length"] - 1
-    df = df.sort_values("Score", ascending=False)
-    df_hits = df.head(top_n)
+        rows = []
+        for pep, pos, score in zip(peptides, positions, probs):
+            mw, hyd_val, aromatic = physchem(pep)
+            tox = toxicity_proxy(pep)
+            allerg = allergenicity_proxy(pep)
+            status = "PASS" if (tox=="Low" and allerg=="Low") else "FLAG"
 
-    st.subheader("🏆 Top Predicted Epitopes")
-    st.dataframe(df_hits)
+            rows.append([
+                pep, pos, len(pep), score,
+                mw, hyd_val, aromatic,
+                tox, allerg, status
+            ])
 
-    # =========================
-    # STRUCTURE MAPPING
-    # =========================
-    if pdb_id:
-        pdb_id = pdb_id.strip()
-        ranges = ",".join([f"{r.Start}-{r.End}" for r in df_hits.itertuples()])
+        df = pd.DataFrame(rows, columns=[
+            "Peptide","Start_Position","Length","Score",
+            "MW","Hydrophobicity","Aromaticity",
+            "Toxicity_Risk","Allergenicity_Risk","Screening_Status"
+        ])
 
-        molstar_url = f"https://www.rcsb.org/3d-view/{pdb_id}?selection=resi:{ranges}"
+        df["End_Position"] = df["Start_Position"] + df["Length"] - 1
 
-        st.subheader("🧬 3D Structure with Highlighted Epitopes")
-        st.markdown(f"### 🔗 [Open structure with highlighted epitopes]({molstar_url})")
+        df = df.sort_values(by="Score", ascending=False)
+        df = df[df["Score"] >= score_cutoff]
 
-        st.success("✅ This will automatically highlight predicted epitope regions.")
+        if remove_overlap_flag:
+            df = remove_overlaps(df)
+
+        df = df[df["Screening_Status"]=="PASS"]
+        df_hits = df.head(top_n)
+
+        st.session_state["df_hits"] = df_hits
+
+        st.subheader("✅ Final Prioritized & Screened Epitopes")
+        st.dataframe(df_hits)
+
+        csv = df_hits.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+
+# =========================
+# 3D STRUCTURE (Mol* Viewer)
+# =========================
+st.subheader("🧬 3D Structure Visualization (Mol*)")
+
+pdb_id = st.text_input("Enter PDB ID (e.g. 4XR8, 1TUP, 7K3G):")
+
+if pdb_id:
+    pdb_id = pdb_id.strip().upper()
+    viewer_url = f"https://www.rcsb.org/3d-view/{pdb_id}"
+
+    st.success("✅ Open structure in Mol* viewer:")
+    st.markdown(f"### 🔗 [Click here to open 3D structure]({viewer_url})")
