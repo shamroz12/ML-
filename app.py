@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from itertools import product
+import base64
 import streamlit.components.v1 as components
 
 # =========================
@@ -70,27 +71,19 @@ def extract_features(seq):
     aa = aa_composition(seq)
     dp = dipeptide_composition(seq)
     mw, hyd, aromatic = physchem(seq)
-    feats = aa + dp + [len(seq), mw, hyd, aromatic]
-    return feats
+    return aa + dp + [len(seq), mw, hyd, aromatic]
 
 # =========================
 # Screening proxies
 # =========================
 def toxicity_proxy(seq):
     hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
-    if hyd_val > 2.5:
-        return "High"
-    else:
-        return "Low"
+    return "High" if hyd_val > 2.5 else "Low"
 
 def allergenicity_proxy(seq):
     aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
     cysteine_frac = seq.count("C") / len(seq)
-
-    if aromatic_frac > 0.3 or cysteine_frac > 0.15:
-        return "High"
-    else:
-        return "Low"
+    return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
 
 # =========================
 # FASTA parser
@@ -106,49 +99,31 @@ def read_fasta(text):
 def remove_overlaps(df):
     selected = []
     used = set()
-
     for _, row in df.iterrows():
         start = row["Start_Position"]
         end = row["End_Position"]
-
         if all(p not in used for p in range(start, end+1)):
             selected.append(row)
             for p in range(start, end+1):
                 used.add(p)
-
     return pd.DataFrame(selected)
 
 # =========================
-# Mol* 3D Viewer
+# 3D Viewer using NGL (iframe) — CLOUD SAFE
 # =========================
-def show_3d_structure_molstar(pdb_text, highlight_ranges):
-
-    sel = ""
-    for s,e in highlight_ranges:
-        sel += f"{int(s)}-{int(e)} or "
-    sel = sel.rstrip(" or ")
-
+def show_3d_structure_ngl(pdb_text):
+    pdb_b64 = base64.b64encode(pdb_text.encode()).decode()
+    url = f"https://nglviewer.org/ngl/?data={pdb_b64}"
     html = f"""
-    <html>
-    <head>
-    <script src="https://unpkg.com/molstar/build/viewer/molstar.js"></script>
-    </head>
-    <body>
-    <div id="app" style="width:800px;height:600px;"></div>
-    <script>
-    const viewer = new molstar.Viewer('app', {{ layoutShowSequence: true }});
-    viewer.loadStructureFromData(`{pdb_text}`, 'pdb');
-    </script>
-    </body>
-    </html>
+    <iframe src="{url}" width="900" height="600" style="border:none;"></iframe>
     """
-    components.html(html, height=650, width=850)
+    components.html(html, height=650)
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("Machine-learning based integrated epitope screening, ranking, and visualization.")
+st.write("Machine-learning based epitope screening, prioritization, and visualization.")
 
 fasta_input = st.text_area("Paste FASTA sequence here:")
 
@@ -185,7 +160,7 @@ if st.button("🔍 Predict Epitopes"):
                     peptides.append(pep)
                     positions.append(i+1)
 
-        st.write(f"🔬 Generated {len(peptides)} candidate peptides from full protein scan.")
+        st.write(f"🔬 Scanning protein: generated {len(peptides)} peptides.")
 
         with st.spinner("⚡ Computing features and predicting (batch)..."):
             feats = [extract_features(p) for p in peptides]
@@ -232,17 +207,16 @@ if st.button("🔍 Predict Epitopes"):
         st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
 
 # =========================
-# 3D STRUCTURE SECTION (PERSISTENT)
+# 3D SECTION (PERSISTENT)
 # =========================
 st.subheader("🧬 3D Structure Visualization")
 
-pdb_file = st.file_uploader("Upload PDB file (from AlphaFold or RCSB):", type=["pdb"])
+pdb_file = st.file_uploader("Upload PDB file (AlphaFold / RCSB):", type=["pdb"])
 
-if "df_hits" in st.session_state and pdb_file is not None:
-    df_hits = st.session_state["df_hits"]
-    pdb_text = pdb_file.read().decode("utf-8")
-
-    highlight_ranges = list(zip(df_hits["Start_Position"], df_hits["End_Position"]))
-
-    if st.button("🧬 Show 3D Structure with Highlighted Epitopes"):
-        show_3d_structure_molstar(pdb_text, highlight_ranges)
+if pdb_file is not None:
+    if "df_hits" not in st.session_state:
+        st.warning("⚠️ Please run 'Predict Epitopes' first.")
+    else:
+        pdb_text = pdb_file.read().decode("utf-8")
+        if st.button("🧬 Show 3D Structure"):
+            show_3d_structure_ngl(pdb_text)
