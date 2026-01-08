@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import joblib
 from itertools import product
-import base64
 
 # =========================
 # Page config
@@ -108,13 +107,6 @@ def remove_overlaps(df):
     return pd.DataFrame(selected)
 
 # =========================
-# Open NGL viewer in new tab (CLOUD SAFE)
-# =========================
-def get_ngl_url(pdb_text):
-    pdb_b64 = base64.b64encode(pdb_text.encode()).decode()
-    return f"https://nglviewer.org/ngl/?data={pdb_b64}"
-
-# =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
@@ -201,20 +193,22 @@ if st.button("🔍 Predict Epitopes"):
         st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
 
 # =========================
-# 3D STRUCTURE (NEW TAB)
+# 3D STRUCTURE (PDB ID BASED — WORKS)
 # =========================
 st.subheader("🧬 3D Structure Visualization")
 
-pdb_file = st.file_uploader("Upload PDB file (AlphaFold / RCSB):", type=["pdb"])
+pdb_id = st.text_input("Enter PDB ID (e.g. 4QXG) or AlphaFold ID (e.g. AF-Q9XYZ1-F1):")
 
-if pdb_file is not None:
+if pdb_id:
     if "df_hits" not in st.session_state:
         st.warning("⚠️ Please run 'Predict Epitopes' first.")
     else:
-        pdb_text = pdb_file.read().decode("utf-8")
-        url = get_ngl_url(pdb_text)
+        pdb_id = pdb_id.strip()
+
+        if pdb_id.upper().startswith("AF-"):
+            url = f"https://nglviewer.org/ngl/?url=https://alphafold.ebi.ac.uk/files/{pdb_id}-model_v4.pdb"
+        else:
+            url = f"https://nglviewer.org/ngl/?pdbid={pdb_id}"
 
         st.success("✅ Structure ready!")
-        st.markdown(f"""
-        🔗 **[Click here to open interactive 3D structure in new tab]({url})**
-        """)
+        st.markdown(f"🔗 **[Click here to open interactive 3D structure in new tab]({url})**")
