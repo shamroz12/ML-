@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -26,6 +24,7 @@ model, feature_columns = load_model()
 # Constants
 # =========================
 amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
+dipeptides = [a+b for a,b in product(amino_acids, repeat=2)]
 
 aa_weights = {
 "A": 89.1,"C":121.2,"D":133.1,"E":147.1,"F":165.2,"G":75.1,"H":155.2,
@@ -39,35 +38,39 @@ hydro = {
 }
 
 # =========================
-# EXACT FEATURE FUNCTION (MATCHES TRAINING)
+# Feature extraction
 # =========================
-def extract_features(seq):
+def aa_composition(seq):
     L = len(seq)
+    return [seq.count(a)/L for a in amino_acids]
 
-    # AA composition (20)
-    aa = [seq.count(a)/L for a in amino_acids]
+def dipeptide_composition(seq):
+    total = len(seq) - 1
+    counts = {dp:0 for dp in dipeptides}
+    for i in range(total):
+        dp = seq[i:i+2]
+        if dp in counts:
+            counts[dp] += 1
+    return [counts[dp]/total for dp in dipeptides] if total > 0 else [0]*400
 
-    # Dipeptide composition (400)
-    dp = [0]*400
-    for i in range(L-1):
-        a1 = amino_acids.index(seq[i])
-        a2 = amino_acids.index(seq[i+1])
-        dp[a1*20 + a2] += 1
-    if L > 1:
-        dp = [x/(L-1) for x in dp]
-
-    # Physicochemical
-    mw = sum(aa_weights[a] for a in seq)
-    hyd = sum(hydro[a] for a in seq)/L
+def physchem(seq):
+    L = len(seq)
+    mw = sum(aa_weights.get(a,0) for a in seq)
+    hyd = sum(hydro.get(a,0) for a in seq)/L
     aromatic = sum(a in "FWY" for a in seq)/L
+    return mw, hyd, aromatic
 
-    return aa + dp + [L, mw, hyd, aromatic]
+def extract_features(seq):
+    aa = aa_composition(seq)
+    dp = dipeptide_composition(seq)
+    mw, hyd, aromatic = physchem(seq)
+    return aa + dp + [len(seq), mw, hyd, aromatic]
 
 # =========================
-# Screening proxies (soft filters)
+# Screening proxies
 # =========================
 def toxicity_proxy(seq):
-    hyd_val = sum(hydro[a] for a in seq)/len(seq)
+    hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
     return "High" if hyd_val > 2.5 else "Low"
 
 def allergenicity_proxy(seq):
@@ -75,140 +78,137 @@ def allergenicity_proxy(seq):
     cysteine_frac = seq.count("C") / len(seq)
     return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
 
+def antigenicity_proxy(seq):
+    return sum(hydro[a] for a in seq) / len(seq)
+
+def cell_type_proxy(seq):
+    L = len(seq)
+    hyd_val = sum(hydro[a] for a in seq)/len(seq)
+    if L >= 8 and L <= 11 and hyd_val > 1:
+        return "T-cell"
+    elif hyd_val < 0:
+        return "B-cell"
+    else:
+        return "Both"
+
 # =========================
-# FASTA parser
+# FASTA parser (MULTI)
 # =========================
-def read_fasta(text):
-    lines = text.strip().splitlines()
-    seq = "".join([l.strip() for l in lines if not l.startswith(">")])
-    return seq.upper()
+def read_fasta_multi(text):
+    seqs = []
+    current = ""
+    for line in text.strip().splitlines():
+        if line.startswith(">"):
+            if current:
+                seqs.append(current)
+            current = ""
+        else:
+            current += line.strip()
+    if current:
+        seqs.append(current)
+    return [s.upper() for s in seqs]
+
+# =========================
+# Conservancy
+# =========================
+def conservancy_percent(peptide, sequences):
+    count = 0
+    for s in sequences:
+        if peptide in s:
+            count += 1
+    return (count / len(sequences)) * 100
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("ML-based epitope prediction + screening + interpretability tracks")
+st.write("ML + Screening + Conservancy + Cell-Type integrated system")
 
-fasta_input = st.text_area("Paste FASTA sequence:")
+fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):")
 
 min_len = st.slider("Minimum peptide length", 8, 15, 9)
 max_len = st.slider("Maximum peptide length", 9, 25, 15)
 
-score_cutoff = st.slider("Minimum ML score", 0.0, 1.0, 0.3, 0.01)
-top_n = st.selectbox("Show top N", [10, 20, 50, 100, 200])
+top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100])
 
 # =========================
 # Predict
 # =========================
 if st.button("🔍 Predict Epitopes"):
 
-    if len(fasta_input.strip()) == 0:
-        st.error("Paste a FASTA sequence")
+    sequences = read_fasta_multi(fasta_input)
+    if len(sequences) == 0:
+        st.error("Please paste FASTA.")
         st.stop()
 
-    seq = read_fasta(fasta_input)
+    main_seq = sequences[0]
 
     peptides = []
     positions = []
 
     for L in range(min_len, max_len+1):
-        for i in range(len(seq)-L+1):
-            pep = seq[i:i+L]
+        for i in range(len(main_seq) - L + 1):
+            pep = main_seq[i:i+L]
             if set(pep).issubset(set(amino_acids)):
                 peptides.append(pep)
                 positions.append(i+1)
 
     st.write(f"Generated {len(peptides)} peptides")
 
-    with st.spinner("Running ML model..."):
-        feats = [extract_features(p) for p in peptides]
-        X = pd.DataFrame(feats, columns=feature_columns)
-        probs = model.predict_proba(X)[:,1]
+    feats = [extract_features(p) for p in peptides]
+    X = pd.DataFrame(feats, columns=feature_columns)
+    probs = model.predict_proba(X)[:,1]
 
     rows = []
     for pep, pos, score in zip(peptides, positions, probs):
-        mw = sum(aa_weights[a] for a in pep)
-        hyd_val = sum(hydro[a] for a in pep)/len(pep)
-        aromatic = sum(a in "FWY" for a in pep)/len(pep)
-
+        mw, hyd_val, aromatic = physchem(pep)
         tox = toxicity_proxy(pep)
         allerg = allergenicity_proxy(pep)
+        antig = antigenicity_proxy(pep)
+        cell = cell_type_proxy(pep)
+        cons = conservancy_percent(pep, sequences)
 
-        # soft penalty
-        penalty = 0
-        if tox == "High": penalty += 0.1
-        if allerg == "High": penalty += 0.1
-
-        final_score = max(score - penalty, 0)
+        final_score = 0.5*score + 0.3*(cons/100) + 0.2*(antig/5)
 
         rows.append([
-            pep, pos, len(pep), score, final_score,
-            tox, allerg
+            pep, pos, len(pep), score, cons, antig, final_score,
+            tox, allerg, cell
         ])
 
     df = pd.DataFrame(rows, columns=[
-        "Peptide","Start","Length","RawScore","FinalScore","Toxicity","Allergenicity"
+        "Peptide","Start","Length","ML_Score","Conservancy_%","Antigenicity",
+        "FinalScore","Toxicity","Allergenicity","Cell_Type"
     ])
 
-    df["End"] = df["Start"] + df["Length"] - 1
+    df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
-    df = df.sort_values("FinalScore", ascending=False)
-    df = df[df["FinalScore"] >= score_cutoff]
+    st.subheader("✅ Final Integrated Epitope Ranking")
+    st.dataframe(df)
 
-    df_hits = df.head(top_n)
-
-    st.session_state["df_hits"] = df_hits
-    st.session_state["full_df"] = df
-
-    st.subheader("✅ Final Ranked Epitopes")
-    st.dataframe(df_hits)
-
-    st.download_button(
-        "⬇️ Download CSV",
-        df_hits.to_csv(index=False).encode("utf-8"),
-        "epitopes.csv"
-    )
-
-# =========================
-# VISUAL ANALYTICS
-# =========================
-if "full_df" in st.session_state:
-
-    df = st.session_state["full_df"]
-
-    st.subheader("📈 Epitope Hotspot Map (along protein)")
-
-    plot_df = df.sort_values("Start")[["Start","FinalScore"]]
-    plot_df = plot_df.set_index("Start")
-    st.line_chart(plot_df)
-
-    st.subheader("📊 Epitope Density Track")
-
-    bins = np.zeros(len(read_fasta(fasta_input)))
-    for _, r in df.iterrows():
-        for i in range(int(r.Start)-1, int(r.End)):
-            if i < len(bins):
-                bins[i] += 1
-
-    density_df = pd.DataFrame({"Density": bins})
-    st.line_chart(density_df)
-
-    st.subheader("🧪 Screening Risk Distribution")
-
-    risk_df = df[["Toxicity","Allergenicity"]]
-    st.dataframe(risk_df.value_counts().reset_index(name="Count"))
-
-    st.subheader("📏 Length Distribution")
+    # =========================
+    # PLOTS (SAFE)
+    # =========================
+    st.subheader("📊 Epitope Length Distribution")
     st.bar_chart(df["Length"].value_counts().sort_index())
 
-    st.subheader("🧠 Score Distribution")
-   bins = np.linspace(df["FinalScore"].min(), df["FinalScore"].max(), 21)
-hist, edges = np.histogram(df["FinalScore"], bins=bins)
+    st.subheader("📊 Cell Type Distribution")
+    st.bar_chart(df["Cell_Type"].value_counts())
 
-score_hist_df = pd.DataFrame({
-    "Score_bin": edges[:-1],
-    "Count": hist
-}).set_index("Score_bin")
+    st.subheader("📊 Toxicity Risk")
+    st.bar_chart(df["Toxicity"].value_counts())
 
-st.bar_chart(score_hist_df)
+    st.subheader("📊 Conservancy Distribution")
+    bins = np.linspace(0,100,11)
+    hist, edges = np.histogram(df["Conservancy_%"], bins=bins)
+    cons_df = pd.DataFrame({"Conservancy": edges[:-1], "Count": hist}).set_index("Conservancy")
+    st.bar_chart(cons_df)
 
+    st.subheader("📍 Epitope Hotspot Map")
+    hotspot = pd.DataFrame({
+        "Position": df["Start"],
+        "Score": df["FinalScore"]
+    }).set_index("Position")
+    st.line_chart(hotspot)
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
