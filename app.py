@@ -182,28 +182,28 @@ if st.button("🔍 Predict Epitopes"):
 
     df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
-    st.subheader("✅ Final Integrated Epitope Ranking")
+    st.subheader("Final Integrated Epitope Ranking")
     st.dataframe(df)
 
     # =========================
     # PLOTS (SAFE)
     # =========================
-    st.subheader("📊 Epitope Length Distribution")
+    st.subheader("Epitope Length Distribution")
     st.bar_chart(df["Length"].value_counts().sort_index())
 
-    st.subheader("📊 Cell Type Distribution")
+    st.subheader("Cell Type Distribution")
     st.bar_chart(df["Cell_Type"].value_counts())
 
-    st.subheader("📊 Toxicity Risk")
+    st.subheader("Toxicity Risk")
     st.bar_chart(df["Toxicity"].value_counts())
 
-    st.subheader("📊 Conservancy Distribution")
+    st.subheader("Conservancy Distribution")
     bins = np.linspace(0,100,11)
     hist, edges = np.histogram(df["Conservancy_%"], bins=bins)
     cons_df = pd.DataFrame({"Conservancy": edges[:-1], "Count": hist}).set_index("Conservancy")
     st.bar_chart(cons_df)
 
-    st.subheader("📍 Epitope Hotspot Map")
+    st.subheader("Epitope Hotspot Map")
     hotspot = pd.DataFrame({
         "Position": df["Start"],
         "Score": df["FinalScore"]
