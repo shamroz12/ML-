@@ -121,7 +121,7 @@ def conservancy_percent(peptide, sequences):
 # =========================
 # UI
 # =========================
-st.title("🧬 Integrated Epitope Prioritization Platform")
+st.title("Integrated Epitope Prioritization Platform")
 st.write("ML + Screening + Conservancy + Cell-Type integrated system")
 
 fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):")
