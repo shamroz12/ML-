@@ -1,11 +1,14 @@
 # app.py
-
 import streamlit as st
 import numpy as np
 import pandas as pd
 import joblib
 from itertools import product
-import streamlit.components.v1 as components
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import requests
+from sklearn.cluster import KMeans
+from Bio import AlignIO
 
 # =========================
 # Page config
@@ -13,7 +16,7 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Integrated Epitope Prioritization Platform", layout="wide")
 
 # =========================
-# Load model (cached)
+# Load model
 # =========================
 @st.cache_resource
 def load_model():
@@ -54,10 +57,7 @@ def dipeptide_composition(seq):
         dp = seq[i:i+2]
         if dp in counts:
             counts[dp] += 1
-    if total > 0:
-        return [counts[dp]/total for dp in dipeptides]
-    else:
-        return [0]*400
+    return [counts[dp]/total for dp in dipeptides] if total > 0 else [0]*400
 
 def physchem(seq):
     L = len(seq)
@@ -70,27 +70,19 @@ def extract_features(seq):
     aa = aa_composition(seq)
     dp = dipeptide_composition(seq)
     mw, hyd, aromatic = physchem(seq)
-    feats = aa + dp + [len(seq), mw, hyd, aromatic]
-    return feats
+    return aa + dp + [len(seq), mw, hyd, aromatic]
 
 # =========================
 # Screening proxies
 # =========================
 def toxicity_proxy(seq):
     hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
-    if hyd_val > 2.5:
-        return "High"
-    else:
-        return "Low"
+    return "High" if hyd_val > 2.5 else "Low"
 
 def allergenicity_proxy(seq):
     aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
     cysteine_frac = seq.count("C") / len(seq)
-
-    if aromatic_frac > 0.3 or cysteine_frac > 0.15:
-        return "High"
-    else:
-        return "Low"
+    return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
 
 # =========================
 # FASTA parser
@@ -101,148 +93,156 @@ def read_fasta(text):
     return seq.upper()
 
 # =========================
-# Remove overlaps
+# UniProt domain fetch
 # =========================
-def remove_overlaps(df):
-    selected = []
-    used = set()
+def fetch_uniprot_domains(uniprot_id):
+    url = f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return []
 
-    for _, row in df.iterrows():
-        start = row["Start_Position"]
-        end = row["End_Position"]
-
-        if all(p not in used for p in range(start, end+1)):
-            selected.append(row)
-            for p in range(start, end+1):
-                used.add(p)
-
-    return pd.DataFrame(selected)
+    data = r.json()
+    domains = []
+    for feat in data.get("features", []):
+        if feat["type"] in ["Domain", "Repeat", "Region"]:
+            try:
+                start = int(feat["location"]["start"]["value"])
+                end = int(feat["location"]["end"]["value"])
+                name = feat.get("description", feat["type"])
+                domains.append((name, start, end))
+            except:
+                pass
+    return domains
 
 # =========================
-# Mol* 3D Viewer
+# Conservation from MSA
 # =========================
-def show_3d_structure_molstar(pdb_text, highlight_ranges):
+def conservation_from_msa(msa_file):
+    aln = AlignIO.read(msa_file, "fasta")
+    aln_len = aln.get_alignment_length()
 
-    sel = ""
-    for s,e in highlight_ranges:
-        sel += f"{int(s)}-{int(e)} or "
-    sel = sel.rstrip(" or ")
-
-    html = f"""
-    <html>
-    <head>
-    <script src="https://unpkg.com/molstar/build/viewer/molstar.js"></script>
-    </head>
-    <body>
-    <div id="app" style="width:800px;height:600px;"></div>
-    <script>
-    const viewer = new molstar.Viewer('app', {{ layoutShowSequence: true }});
-    viewer.loadStructureFromData(`{pdb_text}`, 'pdb');
-    </script>
-    </body>
-    </html>
-    """
-    components.html(html, height=650, width=850)
+    scores = []
+    for i in range(aln_len):
+        col = aln[:, i]
+        freq = {}
+        for a in col:
+            if a != "-":
+                freq[a] = freq.get(a, 0) + 1
+        if len(freq) == 0:
+            scores.append(0)
+        else:
+            m = max(freq.values())
+            scores.append(m / sum(freq.values()))
+    return np.array(scores)
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("Machine-learning based integrated epitope screening, ranking, and visualization.")
 
-fasta_input = st.text_area("Paste FASTA sequence here:")
+fasta_input = st.text_area("Paste protein FASTA:")
 
-min_len = st.slider("Minimum peptide length", 8, 15, 9)
-max_len = st.slider("Maximum peptide length", 9, 25, 15)
+uniprot_id = st.text_input("UniProt ID (optional, for domains):")
 
-threshold_mode = st.selectbox(
-    "Prediction mode:",
-    ["Strict (0.5)", "Balanced (0.3)", "Sensitive (0.25)"]
-)
+msa_file = st.file_uploader("Upload MSA FASTA (optional, for conservation):", type=["fasta","fa","faa"])
 
-TH = 0.5 if threshold_mode=="Strict (0.5)" else 0.3 if threshold_mode=="Balanced (0.3)" else 0.25
+min_len = st.slider("Min peptide length", 8, 15, 9)
+max_len = st.slider("Max peptide length", 9, 25, 15)
 
-top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100, 200])
-score_cutoff = st.slider("Minimum ML score cutoff:", 0.0, 1.0, float(TH), 0.01)
-remove_overlap_flag = st.checkbox("Remove overlapping peptides", value=True)
+top_n = st.selectbox("Top N epitopes", [10,20,50,100])
 
 # =========================
 # Predict
 # =========================
 if st.button("🔍 Predict Epitopes"):
-    if len(fasta_input.strip()) == 0:
-        st.error("Please paste a FASTA sequence.")
+
+    seq = read_fasta(fasta_input)
+    peptides, positions = [], []
+
+    for L in range(min_len, max_len+1):
+        for i in range(len(seq)-L+1):
+            pep = seq[i:i+L]
+            if set(pep).issubset(set(amino_acids)):
+                peptides.append(pep)
+                positions.append(i+1)
+
+    feats = [extract_features(p) for p in peptides]
+    X = pd.DataFrame(feats, columns=feature_columns)
+    probs = model.predict_proba(X)[:,1]
+
+    df = pd.DataFrame({
+        "Peptide": peptides,
+        "Start": positions,
+        "Length": [len(p) for p in peptides],
+        "Score": probs
+    })
+    df["End"] = df["Start"] + df["Length"] - 1
+
+    df = df.sort_values("Score", ascending=False).head(top_n)
+
+    st.dataframe(df)
+
+    # =========================
+    # Clustering track
+    # =========================
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    df["Cluster"] = kmeans.fit_predict(df[["Start","End","Score"]])
+
+    # =========================
+    # Domain track
+    # =========================
+    domains = fetch_uniprot_domains(uniprot_id) if uniprot_id else []
+
+    # =========================
+    # Conservation track
+    # =========================
+    if msa_file:
+        cons = conservation_from_msa(msa_file)
     else:
-        seq = read_fasta(fasta_input)
+        cons = np.zeros(len(seq))
 
-        peptides = []
-        positions = []
+    # =========================
+    # Interactive Plotly Browser
+    # =========================
+    fig = go.Figure()
 
-        for L in range(min_len, max_len+1):
-            for i in range(len(seq) - L + 1):
-                pep = seq[i:i+L]
-                if set(pep).issubset(set(amino_acids)):
-                    peptides.append(pep)
-                    positions.append(i+1)
+    # Protein backbone
+    fig.add_trace(go.Scatter(x=[1,len(seq)], y=[0,0], mode="lines", line=dict(width=6), name="Protein"))
 
-        st.write(f"🔬 Generated {len(peptides)} candidate peptides from full protein scan.")
+    # Epitopes
+    for _, r in df.iterrows():
+        fig.add_trace(go.Scatter(
+            x=[r.Start, r.End],
+            y=[1,1],
+            mode="lines",
+            line=dict(width=10),
+            name=f"Epi {r.Peptide}"
+        ))
 
-        with st.spinner("⚡ Computing features and predicting (batch)..."):
-            feats = [extract_features(p) for p in peptides]
-            X_all = pd.DataFrame(feats, columns=feature_columns)
-            probs = model.predict_proba(X_all)[:,1]
+    # Conservation
+    fig.add_trace(go.Scatter(
+        x=list(range(1,len(cons)+1)),
+        y=cons,
+        name="Conservation",
+        yaxis="y2"
+    ))
 
-        rows = []
-        for pep, pos, score in zip(peptides, positions, probs):
-            mw, hyd_val, aromatic = physchem(pep)
-            tox = toxicity_proxy(pep)
-            allerg = allergenicity_proxy(pep)
-            status = "PASS" if (tox=="Low" and allerg=="Low") else "FLAG"
+    # Domains
+    for name,s,e in domains:
+        fig.add_trace(go.Scatter(
+            x=[s,e],
+            y=[-1,-1],
+            mode="lines",
+            line=dict(width=12),
+            name=name
+        ))
 
-            rows.append([
-                pep, pos, len(pep), score,
-                mw, hyd_val, aromatic,
-                tox, allerg, status
-            ])
+    fig.update_layout(
+        title="Interactive Epitope Genome-Browser View",
+        xaxis=dict(title="Protein position"),
+        yaxis=dict(title="Epitopes", range=[-2,2]),
+        yaxis2=dict(title="Conservation", overlaying="y", side="right"),
+        height=600
+    )
 
-        df = pd.DataFrame(rows, columns=[
-            "Peptide","Start_Position","Length","Score",
-            "MW","Hydrophobicity","Aromaticity",
-            "Toxicity_Risk","Allergenicity_Risk","Screening_Status"
-        ])
-
-        df["End_Position"] = df["Start_Position"] + df["Length"] - 1
-
-        df = df.sort_values(by="Score", ascending=False)
-        df = df[df["Score"] >= score_cutoff]
-
-        if remove_overlap_flag:
-            df = remove_overlaps(df)
-
-        df = df[df["Screening_Status"]=="PASS"]
-
-        df_hits = df.head(top_n)
-
-        st.session_state["df_hits"] = df_hits
-
-        st.subheader("✅ Final Prioritized & Screened Epitope Candidates")
-        st.dataframe(df_hits)
-
-        csv = df_hits.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
-
-# =========================
-# 3D STRUCTURE SECTION (PERSISTENT)
-# =========================
-st.subheader("🧬 3D Structure Visualization")
-
-pdb_file = st.file_uploader("Upload PDB file (from AlphaFold or RCSB):", type=["pdb"])
-
-if "df_hits" in st.session_state and pdb_file is not None:
-    df_hits = st.session_state["df_hits"]
-    pdb_text = pdb_file.read().decode("utf-8")
-
-    highlight_ranges = list(zip(df_hits["Start_Position"], df_hits["End_Position"]))
-
-    if st.button("🧬 Show 3D Structure with Highlighted Epitopes"):
-        show_3d_structure_molstar(pdb_text, highlight_ranges)
+    st.plotly_chart(fig, use_container_width=True)
