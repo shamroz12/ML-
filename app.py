@@ -202,4 +202,13 @@ if "full_df" in st.session_state:
     st.bar_chart(df["Length"].value_counts().sort_index())
 
     st.subheader("🧠 Score Distribution")
-    st.bar_chart(pd.cut(df["FinalScore"], bins=20).value_counts().sort_index())
+   bins = np.linspace(df["FinalScore"].min(), df["FinalScore"].max(), 21)
+hist, edges = np.histogram(df["FinalScore"], bins=bins)
+
+score_hist_df = pd.DataFrame({
+    "Score_bin": edges[:-1],
+    "Count": hist
+}).set_index("Score_bin")
+
+st.bar_chart(score_hist_df)
+
