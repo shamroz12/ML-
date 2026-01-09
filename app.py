@@ -5,14 +5,11 @@ import numpy as np
 import pandas as pd
 import joblib
 from itertools import product
-import plotly.graph_objects as go
-import requests
-from sklearn.cluster import KMeans
 
 # =========================
 # Page config
 # =========================
-st.set_page_config(page_title="Advanced Epitope Prioritization Platform", layout="wide")
+st.set_page_config(page_title="Integrated Epitope Prioritization Platform", layout="wide")
 
 # =========================
 # Load model
@@ -29,7 +26,6 @@ model, feature_columns = load_model()
 # Constants
 # =========================
 amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
-dipeptides = [a+b for a,b in product(amino_acids, repeat=2)]
 
 aa_weights = {
 "A": 89.1,"C":121.2,"D":133.1,"E":147.1,"F":165.2,"G":75.1,"H":155.2,
@@ -51,12 +47,12 @@ def aa_composition(seq):
 
 def dipeptide_composition(seq):
     total = len(seq)-1
-    counts = {dp:0 for dp in dipeptides}
+    counts = {a+b:0 for a in amino_acids for b in amino_acids}
     for i in range(total):
         dp = seq[i:i+2]
         if dp in counts:
             counts[dp]+=1
-    return [counts[dp]/total for dp in dipeptides] if total>0 else [0]*400
+    return [counts[k]/total for k in counts] if total>0 else [0]*400
 
 def physchem(seq):
     L = len(seq)
@@ -79,60 +75,61 @@ def read_fasta(txt):
     return "".join([l.strip() for l in lines if not l.startswith(">")]).upper()
 
 # =========================
-# UniProt domain fetch
+# Screening modules (LAYER 2)
 # =========================
-def fetch_uniprot_domains(uniprot):
-    url = f"https://rest.uniprot.org/uniprotkb/{uniprot}.json"
-    r = requests.get(url)
-    if r.status_code != 200:
-        return []
-    data = r.json()
-    domains=[]
-    for f in data.get("features",[]):
-        if f["type"] in ["Domain","Region","Repeat"]:
-            try:
-                s=int(f["location"]["start"]["value"])
-                e=int(f["location"]["end"]["value"])
-                name=f.get("description",f["type"])
-                domains.append((name,s,e))
-            except:
-                pass
-    return domains
 
-# =========================
-# Proxies
-# =========================
-def classify_type(seq):
-    if len(seq)>=13: return "T-cell"
-    else: return "B-cell"
+def toxicity_proxy(seq):
+    hyd_val = sum(hydro[a] for a in seq)/len(seq)
+    return "High" if hyd_val > 2.5 else "Low"
 
-def conservation_proxy(seq):
-    return 1.0 - (len(set(seq))/len(seq))
+def allergenicity_proxy(seq):
+    aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
+    cysteine_frac = seq.count("C") / len(seq)
+    return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
 
-def population_coverage_proxy(seq):
-    return min(1.0, (seq.count("L")+seq.count("I")+seq.count("V"))/len(seq))
+def aggregation_proxy(seq):
+    return "High" if seq.count("V")+seq.count("I")+seq.count("L") > len(seq)*0.5 else "Low"
+
+def low_complexity_proxy(seq):
+    return "High" if len(set(seq)) < len(seq)/2 else "Low"
+
+def charge_proxy(seq):
+    pos = seq.count("K")+seq.count("R")
+    neg = seq.count("D")+seq.count("E")
+    return "Imbalanced" if abs(pos-neg) > len(seq)/2 else "Balanced"
+
+def classify_epitope_type(seq):
+    return "T-cell" if len(seq) >= 13 else "B-cell"
 
 # =========================
 # UI
 # =========================
-st.title("🧬 Advanced Epitope Prioritization & Visualization Platform")
+st.title("🧬 Integrated Epitope Discovery & Decision Platform")
 
 fasta = st.text_area("Paste protein FASTA sequence:")
-uniprot_id = st.text_input("UniProt ID (optional, for domain overlay):")
 
-min_len = st.slider("Min length",8,15,9)
-max_len = st.slider("Max length",9,25,15)
-top_n = st.selectbox("Top N epitopes",[10,20,50,100])
+min_len = st.slider("Minimum peptide length", 8, 15, 9)
+max_len = st.slider("Maximum peptide length", 9, 25, 15)
+
+score_cutoff = st.slider("ML score cutoff", 0.0, 1.0, 0.3, 0.01)
+top_n = st.selectbox("Show top N", [20, 50, 100, 200])
+
+show_all = st.checkbox("Show ALL peptides (including FLAG)", value=False)
 
 # =========================
-# Predict
+# Run pipeline
 # =========================
-if st.button("🔍 Run Full Epitope Analysis"):
+if st.button("🔍 Run Integrated Epitope Analysis"):
+
+    if len(fasta.strip()) == 0:
+        st.error("Please paste a FASTA sequence.")
+        st.stop()
 
     seq = read_fasta(fasta)
 
     peptides=[]
     starts=[]
+
     for L in range(min_len,max_len+1):
         for i in range(len(seq)-L+1):
             p = seq[i:i+L]
@@ -140,95 +137,78 @@ if st.button("🔍 Run Full Epitope Analysis"):
                 peptides.append(p)
                 starts.append(i+1)
 
-    feats=[extract_features(p) for p in peptides]
-    X=pd.DataFrame(feats,columns=feature_columns)
-    probs=model.predict_proba(X)[:,1]
+    st.write(f"Generated {len(peptides)} peptides.")
 
-    df=pd.DataFrame({
-        "Peptide":peptides,
-        "Start":starts,
-        "Length":[len(p) for p in peptides],
-        "Score":probs
-    })
-    df["End"]=df["Start"]+df["Length"]-1
+    with st.spinner("Computing ML features & predictions..."):
+        feats=[extract_features(p) for p in peptides]
+        X=pd.DataFrame(feats,columns=feature_columns)
+        probs=model.predict_proba(X)[:,1]
 
-    df["Type"]=df["Peptide"].apply(classify_type)
-    df["Conservation"]=df["Peptide"].apply(conservation_proxy)
-    df["Population_Coverage"]=df["Peptide"].apply(population_coverage_proxy)
+    rows=[]
 
-    df=df.sort_values("Score",ascending=False).head(top_n)
+    for pep, pos, score in zip(peptides, starts, probs):
 
-    # Clustering
-    km=KMeans(n_clusters=3,n_init=10,random_state=42)
-    df["Cluster"]=km.fit_predict(df[["Start","End","Score"]])
+        tox = toxicity_proxy(pep)
+        allerg = allergenicity_proxy(pep)
+        aggr = aggregation_proxy(pep)
+        lc = low_complexity_proxy(pep)
+        charge = charge_proxy(pep)
+        epi_type = classify_epitope_type(pep)
 
-    st.subheader("📋 Final Prioritized Epitopes")
-    st.dataframe(df)
+        reasons=[]
+        if tox=="High": reasons.append("Toxicity")
+        if allerg=="High": reasons.append("Allergenicity")
+        if aggr=="High": reasons.append("Aggregation")
+        if lc=="High": reasons.append("LowComplexity")
+        if charge=="Imbalanced": reasons.append("Charge")
 
-    # =========================
-    # Tracks
-    # =========================
-    domains = fetch_uniprot_domains(uniprot_id) if uniprot_id else []
+        final_status = "PASS" if (len(reasons)==0 and score>=score_cutoff) else "FLAG"
 
-    # Density track
-    density = np.zeros(len(seq))
-    for _,r in df.iterrows():
-        density[r.Start-1:r.End]+=1
+        safety_score = 1.0 if tox=="Low" and allerg=="Low" else 0.3
+        develop_score = 1.0 if aggr=="Low" and lc=="Low" and charge=="Balanced" else 0.4
+        immuno_score = 1.0
 
-    # =========================
-    # Plot
-    # =========================
-    fig=go.Figure()
+        final_priority = score * safety_score * develop_score * immuno_score
 
-    # Protein backbone
-    fig.add_trace(go.Scatter(x=[1,len(seq)],y=[0,0],mode="lines",line=dict(width=6),name="Protein"))
+        rows.append([
+            pep, pos, len(pep), score,
+            epi_type,
+            tox, allerg, aggr, lc, charge,
+            final_status,
+            ",".join(reasons) if reasons else "None",
+            final_priority
+        ])
 
-    # Epitopes
-    colors=["red","blue","green","orange","purple"]
-    for _,r in df.iterrows():
-        fig.add_trace(go.Scatter(
-            x=[r.Start,r.End],
-            y=[1,1],
-            mode="lines",
-            line=dict(width=10,color=colors[int(r.Cluster)%5]),
-            name=r.Peptide,
-            hovertext=f"""
-Score:{r.Score:.3f}
-Type:{r.Type}
-Conservation:{r.Conservation:.2f}
-Population:{r.Population_Coverage:.2f}
-"""
-        ))
+    df = pd.DataFrame(rows, columns=[
+        "Peptide","Start_Position","Length","ML_Score",
+        "Epitope_Type",
+        "Toxicity","Allergenicity","Aggregation","Low_Complexity","Charge",
+        "Final_Status","Rejection_Reasons","Final_Priority_Score"
+    ])
 
-    # Domains
-    for name,s,e in domains:
-        fig.add_trace(go.Scatter(x=[s,e],y=[-1,-1],mode="lines",line=dict(width=12),name=f"Domain: {name}"))
+    df["End_Position"] = df["Start_Position"] + df["Length"] - 1
 
-    # Density
-    fig.add_trace(go.Scatter(
-        x=list(range(1,len(seq)+1)),
-        y=density,
-        name="Epitope Density",
-        yaxis="y2",
-        line=dict(color="black")
-    ))
+    df = df.sort_values("Final_Priority_Score", ascending=False)
 
-    fig.update_layout(
-        title="🧬 Interactive Epitope Landscape Browser",
-        xaxis=dict(title="Protein Position"),
-        yaxis=dict(visible=False,range=[-2,2]),
-        yaxis2=dict(overlaying="y",side="right",title="Density"),
-        height=700
-    )
+    # Default view = PASS only
+    if not show_all:
+        df_view = df[df["Final_Status"]=="PASS"]
+    else:
+        df_view = df
 
-    st.plotly_chart(fig,use_container_width=True)
+    df_view = df_view.head(top_n)
 
-    # =========================
+    st.subheader("📋 Integrated Epitope Decision Table")
+    st.dataframe(df_view)
+
+    # Summary
+    st.subheader("📊 Screening Summary")
+    st.write(df["Final_Status"].value_counts())
+
     # Download
-    # =========================
     st.download_button(
         "⬇️ Download Full Results",
         df.to_csv(index=False).encode("utf-8"),
-        "final_epitope_analysis.csv",
+        "integrated_epitope_results.csv",
         "text/csv"
     )
