@@ -61,9 +61,9 @@ def dipeptide_composition(seq):
 def physchem(seq):
     L = len(seq)
     mw = sum(aa_weights.get(a,0) for a in seq)
-    hyd = sum(hydro.get(a,0) for a in seq)/L
+    hydv = sum(hydro.get(a,0) for a in seq)/L
     aromatic = sum(a in "FWY" for a in seq)/L
-    return mw, hyd, aromatic
+    return mw, hydv, aromatic
 
 def extract_features(seq):
     aa = aa_composition(seq)
@@ -157,104 +157,43 @@ def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="sco
             col={"T-cell":"red","B-cell":"blue","Both":"purple"}[r["Cell_Type"]]
         else: col="orange"
 
-        if style=="cartoon":
-            view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
-        if style=="surface":
-            view.setStyle({"resi":list(range(s,e+1))},{"surface":{"color":col}})
-        if style=="stick":
-            view.setStyle({"resi":list(range(s,e+1))},{"stick":{"color":col}})
+        view.setStyle({"resi":list(range(s,e+1))},{style:{"color":col}})
 
     view.zoomTo()
     components.html(view._make_html(), height=650, scrolling=False)
-    def draw_vaccine_construct_figure(df, linker="GPGPG", save_path=None):
+
+# =========================
+# Vaccine construct drawing
+# =========================
+def draw_vaccine_construct_figure(df, linker="GPGPG", save_path=None):
 
     fig, ax = plt.subplots(figsize=(16, 3), dpi=300)
 
-    colors = {
-        "T-cell": "#d62728",   # red
-        "B-cell": "#1f77b4",   # blue
-        "Both": "#9467bd"      # purple
-    }
+    colors = {"T-cell":"#d62728","B-cell":"#1f77b4","Both":"#9467bd"}
 
-    x = 0
-    y = 0.5
-    height = 0.3
-
-    total_len = 0
+    x = 0; y = 0.5; height = 0.3; total_len = 0
 
     for i, r in df.iterrows():
-        pep = r["Peptide"]
-        L = len(pep)
-        ctype = r["Cell_Type"]
+        pep = r["Peptide"]; L = len(pep); ctype = r["Cell_Type"]
 
-        # Draw epitope block
-        ax.add_patch(
-            plt.Rectangle(
-                (x, y), L, height,
-                facecolor=colors.get(ctype, "black"),
-                edgecolor="black"
-            )
-        )
+        ax.add_patch(plt.Rectangle((x, y), L, height, facecolor=colors.get(ctype,"black"), edgecolor="black"))
+        ax.text(x+L/2, y+height/2, pep, ha="center", va="center", fontsize=8, rotation=90, color="white", fontweight="bold")
 
-        # Label epitope
-        ax.text(
-            x + L/2, y + height/2,
-            pep,
-            ha="center", va="center",
-            fontsize=8, rotation=90, color="white", fontweight="bold"
-        )
+        x += L; total_len += L
 
-        x += L
-        total_len += L
-
-        # Draw linker (except after last)
         if i != df.index[-1]:
             Lk = len(linker)
-            ax.add_patch(
-                plt.Rectangle(
-                    (x, y), Lk, height,
-                    facecolor="#7f7f7f",
-                    edgecolor="black",
-                    hatch="//"
-                )
-            )
+            ax.add_patch(plt.Rectangle((x, y), Lk, height, facecolor="#7f7f7f", edgecolor="black", hatch="//"))
+            ax.text(x+Lk/2, y+height/2, linker, ha="center", va="center", fontsize=7, rotation=90, color="white")
+            x += Lk; total_len += Lk
 
-            ax.text(
-                x + Lk/2, y + height/2,
-                linker,
-                ha="center", va="center",
-                fontsize=7, rotation=90, color="white"
-            )
-
-            x += Lk
-            total_len += Lk
-
-    # Formatting
-    ax.set_xlim(0, x)
-    ax.set_ylim(0, 1.2)
-    ax.set_yticks([])
-    ax.set_xlabel("Amino acid position in construct", fontsize=12)
-    ax.set_title("Multi-epitope Vaccine Construct Architecture", fontsize=16, fontweight="bold")
-
-    # Scale bar
+    ax.set_xlim(0, x); ax.set_ylim(0, 1.2); ax.set_yticks([])
+    ax.set_xlabel("Amino acid position"); ax.set_title("Multi-epitope Vaccine Construct Architecture", fontsize=16, fontweight="bold")
     ax.plot([0, total_len], [0.25, 0.25], color="black", lw=2)
-    ax.text(total_len/2, 0.18, f"Total length = {total_len} aa", ha="center", fontsize=11)
-
-    # Legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor=colors["T-cell"], label="T-cell epitope"),
-        Patch(facecolor=colors["B-cell"], label="B-cell epitope"),
-        Patch(facecolor=colors["Both"], label="B/T epitope"),
-        Patch(facecolor="#7f7f7f", label="Linker (GPGPG)", hatch="//")
-    ]
-    ax.legend(handles=legend_elements, loc="upper center", ncol=4, frameon=False)
+    ax.text(total_len/2, 0.18, f"Total length = {total_len} aa", ha="center")
 
     plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-
+    if save_path: plt.savefig(save_path, dpi=300, bbox_inches="tight")
     return fig
 
 # =========================
@@ -262,19 +201,9 @@ def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="sco
 # =========================
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
 
-tabs = st.tabs([
-    "🔬 Pipeline",
-    "🧠 SHAP",
-    "🧩 Vaccine Construct",
-    "🗺️ Landscape",
-    "🧬 3D Structure",
-    "🧱 Structure Export",
-    "📄 Report"
-])
+tabs = st.tabs(["🔬 Pipeline","🧠 SHAP","🧩 Vaccine Construct","🗺️ Landscape","🧬 3D Structure","🧱 Export","📄 Report"])
 
-# =========================
-# TAB 1 — PIPELINE
-# =========================
+# ---------------- TAB 1 ----------------
 with tabs[0]:
     fasta_input = st.text_area("Paste FASTA (variants allowed):")
     min_len = st.slider("Min length",8,15,9)
@@ -293,43 +222,23 @@ with tabs[0]:
                     peptides.append(pep); positions.append(i+1)
 
         X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
-
-        preds=[]
-        for _ in range(5):
-            idx=np.random.choice(len(X),len(X),replace=True)
-            preds.append(model.predict_proba(X.iloc[idx])[:,1])
-        preds=np.array(preds)
-        meanp=preds.mean(axis=0); stdp=preds.std(axis=0)
+        meanp = model.predict_proba(X)[:,1]
 
         rows=[]
-        for i,(pep,pos,ml) in enumerate(zip(peptides,positions,meanp)):
-            tox=toxicity_proxy(pep)
-            allerg=allergenicity_proxy(pep)
-            antig=antigenicity_proxy(pep)
-            cell=cell_type_proxy(pep)
-            cons=conservancy_percent(pep,seqs)
-            rob=robustness_score(pep,seqs)
+        for pep,pos,ml in zip(peptides,positions,meanp):
+            tox=toxicity_proxy(pep); allerg=allergenicity_proxy(pep)
+            antig=antigenicity_proxy(pep); cell=cell_type_proxy(pep)
+            cons=conservancy_percent(pep,seqs); rob=robustness_score(pep,seqs)
             popc,pops=population_coverage_proxy(pep)
+            final=0.4*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.05*(antig/5)
+            rows.append([pep,pos,len(pep),ml,cons,rob,antig,popc,pops,final,tox,allerg,cell])
 
-            final=0.35*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.1*(antig/5)
-
-            rows.append([pep,pos,len(pep),ml,stdp[i],cons,rob,antig,popc,pops,final,tox,allerg,cell])
-
-        df=pd.DataFrame(rows,columns=[
-            "Peptide","Start","Length","ML_Mean","ML_Std","Conservancy_%","Robustness",
-            "Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"
-        ])
-
+        df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","Conservancy_%","Robustness","Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"])
         df=df.sort_values("FinalScore",ascending=False).head(top_n)
-
-        st.session_state["df"]=df
-        st.session_state["X"]=X
-
+        st.session_state["df"]=df; st.session_state["X"]=X
         st.dataframe(df)
 
-# =========================
-# TAB 2 — SHAP
-# =========================
+# ---------------- TAB 2 ----------------
 with tabs[1]:
     if "df" in st.session_state:
         X=st.session_state["X"]
@@ -339,40 +248,16 @@ with tabs[1]:
         shap.summary_plot(shap_vals, X.iloc[:5], show=False)
         st.pyplot(fig)
 
-# =========================
-# TAB 3 — VACCINE CONSTRUCT DESIGNER (PUBLICATION-GRADE)
-# =========================
+# ---------------- TAB 3 ----------------
 with tabs[2]:
-
-    st.subheader("🧩 Multi-Epitope Vaccine Construct Designer")
-
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
-
-        linker = "GPGPG"
-
-        construct = linker.join(df["Peptide"].tolist())
-
-        st.markdown("### 📌 Final Vaccine Construct Sequence")
+    if "df" in st.session_state:
+        df=st.session_state["df"]
+        construct="GPGPG".join(df["Peptide"])
         st.code(construct)
-        st.write("Total construct length:", len(construct), "aa")
-
-        st.markdown("### 🖼️ Construct Architecture (Publication-Quality)")
-
-        fig = draw_vaccine_construct_figure(df, linker=linker)
+        fig=draw_vaccine_construct_figure(df)
         st.pyplot(fig)
 
-        # Save high-res image
-        if st.button("💾 Save High-Resolution Figure (PNG)"):
-            out_path = "Vaccine_Construct.png"
-            draw_vaccine_construct_figure(df, linker=linker, save_path=out_path)
-            st.success(f"Saved: {out_path}")
-
-# =========================
-# TAB 4 — LANDSCAPE
-# =========================
+# ---------------- TAB 4 ----------------
 with tabs[3]:
     if "df" in st.session_state:
         df=st.session_state["df"]
@@ -381,28 +266,18 @@ with tabs[3]:
         ax.set_title("Immunogenic Landscape")
         st.pyplot(fig)
 
-# =========================
-# TAB 5 — 3D STRUCTURE
-# =========================
+# ---------------- TAB 5 ----------------
 with tabs[4]:
-    st.subheader("Interactive 3D Protein Viewer")
     pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
     if "df" in st.session_state and pdb_file:
         df=st.session_state["df"]
         pdb_text=pdb_file.read().decode("utf-8")
-
-        c1,c2,c3=st.columns(3)
-        with c1: style=st.selectbox("Style",["cartoon","surface","stick"])
-        with c2: color_mode=st.selectbox("Color by",["score","cell","uniform"])
-        with c3:
-            ep_list=["ALL"]+df["Peptide"].tolist()
-            sel=st.selectbox("Highlight",ep_list)
-
+        style=st.selectbox("Style",["cartoon","surface","stick"])
+        color_mode=st.selectbox("Color by",["score","cell","uniform"])
+        sel=st.selectbox("Highlight",["ALL"]+df["Peptide"].tolist())
         show_structure_3d(pdb_text, df, sel, style, color_mode)
 
-# =========================
-# TAB 6 — EXPORT
-# =========================
+# ---------------- TAB 6 ----------------
 with tabs[5]:
     if "df" in st.session_state:
         df=st.session_state["df"]
@@ -413,23 +288,13 @@ with tabs[5]:
                     f.write(f"color red, resi {s}-{e}\n")
             st.success("Saved highlight_epitopes.pml")
 
-# =========================
-# TAB 7 — REPORT
-# =========================
+# ---------------- TAB 7 ----------------
 with tabs[6]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-
         if st.button("Generate PDF"):
             fig,ax=plt.subplots(figsize=(10,4))
             ax.scatter(df["Start"],df["FinalScore"])
-            ax.set_title("Immunogenic Landscape")
             with PdfPages("Epitope_Report.pdf") as pdf:
                 pdf.savefig(fig)
             st.success("Saved Epitope_Report.pdf")
-
-        if st.button("Generate Methods"):
-            methods = """
-Epitope prediction was performed using a supervised machine learning model trained on validated epitope datasets. Features included amino acid composition, dipeptide composition, and physicochemical descriptors. Predictions were filtered using in-silico toxicity, allergenicity, and antigenicity screening. Conservancy and variant robustness were computed across sequence variants. Population coverage was estimated using a proxy model. A multi-objective ranking scheme was applied. Vaccine constructs were assembled using optimized epitope ordering and linkers. Explainable AI analysis was performed using SHAP. Structural mapping was performed using 3D molecular visualization.
-"""
-            st.text_area("Methods Section", methods, height=300)
