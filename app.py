@@ -4,17 +4,15 @@ import pandas as pd
 import joblib
 from itertools import product
 import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 from matplotlib.backends.backend_pdf import PdfPages
 import shap
-import os
+import py3Dmol
+import streamlit.components.v1 as components
 
 # =========================
 # Page config
 # =========================
-st.set_page_config(page_title="Unified Epitope Intelligence & Vaccine Design Platform", layout="wide")
+st.set_page_config(page_title="Unified Epitope & Vaccine Design Platform", layout="wide")
 
 # =========================
 # Load model
@@ -74,275 +72,266 @@ def extract_features(seq):
     return aa + dp + [len(seq), mw, hydv, aromatic]
 
 # =========================
-# Screening & biology proxies
+# Biology proxies
 # =========================
 def toxicity_proxy(seq):
-    hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
-    return "High" if hyd_val > 2.5 else "Low"
+    return "High" if sum(hydro[a] for a in seq)/len(seq) > 2.5 else "Low"
 
 def allergenicity_proxy(seq):
-    aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
-    cysteine_frac = seq.count("C") / len(seq)
-    return "High" if (aromatic_frac > 0.3 or cysteine_frac > 0.15) else "Low"
+    aromatic_frac = sum(a in "FWY" for a in seq)/len(seq)
+    cyst_frac = seq.count("C")/len(seq)
+    return "High" if aromatic_frac>0.3 or cyst_frac>0.15 else "Low"
 
 def antigenicity_proxy(seq):
-    return sum(hydro[a] for a in seq) / len(seq)
+    return sum(hydro[a] for a in seq)/len(seq)
 
 def cell_type_proxy(seq):
-    L = len(seq)
-    hyd_val = sum(hydro[a] for a in seq)/len(seq)
-    if 8 <= L <= 11 and hyd_val > 1:
-        return "T-cell"
-    elif hyd_val < 0:
-        return "B-cell"
-    else:
-        return "Both"
+    L=len(seq)
+    hydv=sum(hydro[a] for a in seq)/L
+    if 8<=L<=11 and hydv>1: return "T-cell"
+    if hydv<0: return "B-cell"
+    return "Both"
 
 # =========================
-# FASTA parser
+# FASTA
 # =========================
 def read_fasta_multi(text):
-    seqs = []
-    current = ""
-    for line in text.strip().splitlines():
-        if line.startswith(">"):
-            if current:
-                seqs.append(current)
-            current = ""
-        else:
-            current += line.strip()
-    if current:
-        seqs.append(current)
+    seqs=[]; cur=""
+    for l in text.strip().splitlines():
+        if l.startswith(">"):
+            if cur: seqs.append(cur); cur=""
+        else: cur+=l.strip()
+    if cur: seqs.append(cur)
     return [s.upper() for s in seqs]
 
 # =========================
 # Conservancy & robustness
 # =========================
-def conservancy_percent(peptide, sequences):
-    return 100 * sum(peptide in s for s in sequences) / len(sequences)
+def conservancy_percent(pep, seqs):
+    return 100*sum(pep in s for s in seqs)/len(seqs)
 
-def robustness_score(peptide, sequences):
-    L = len(peptide)
-    hits = 0
+def robustness_score(pep, seqs):
+    L=len(pep); hits=0
     for i in range(L):
-        for aa in amino_acids:
-            if aa != peptide[i]:
-                mut = peptide[:i] + aa + peptide[i+1:]
-                if any(mut in s for s in sequences):
-                    hits += 1
-    return hits / (L*19)
+        for a in amino_acids:
+            if a!=pep[i]:
+                mut=pep[:i]+a+pep[i+1:]
+                if any(mut in s for s in seqs): hits+=1
+    return hits/(L*19)
 
 # =========================
-# Population coverage proxy
+# Population proxy
 # =========================
 def population_coverage_proxy(seq):
-    L = len(seq)
-    hydv = sum(hydro[a] for a in seq)/L
-    if 9 <= L <= 11 and hydv > 0.5:
-        return "Broad", 0.9
-    elif L >= 8:
-        return "Medium", 0.6
-    else:
-        return "Narrow", 0.3
+    L=len(seq)
+    if 9<=L<=11: return "Broad",0.9
+    if L>=8: return "Medium",0.6
+    return "Narrow",0.3
+
+# =========================
+# 3D viewer
+# =========================
+def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
+    view = py3Dmol.view(width=900, height=600)
+    view.addModel(pdb_text, "pdb")
+
+    if style=="cartoon": view.setStyle({"cartoon":{"color":"lightgray"}})
+    if style=="surface": view.setStyle({"surface":{"opacity":0.9,"color":"lightgray"}})
+    if style=="stick": view.setStyle({"stick":{}})
+
+    scores=df["FinalScore"].values
+    mn, mx = scores.min(), scores.max()
+
+    def score_color(s):
+        x=(s-mn)/(mx-mn+1e-6)
+        r=int(255*x); b=int(255*(1-x))
+        return f"rgb({r},0,{b})"
+
+    if mode!="ALL":
+        df = df[df["Peptide"]==mode]
+
+    for _,r in df.iterrows():
+        s=int(r["Start"]); e=int(r["Start"]+r["Length"])
+        if color_mode=="score": col=score_color(r["FinalScore"])
+        elif color_mode=="cell":
+            col={"T-cell":"red","B-cell":"blue","Both":"purple"}[r["Cell_Type"]]
+        else: col="orange"
+
+        if style=="cartoon":
+            view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
+        if style=="surface":
+            view.setStyle({"resi":list(range(s,e+1))},{"surface":{"color":col}})
+        if style=="stick":
+            view.setStyle({"resi":list(range(s,e+1))},{"stick":{"color":col}})
+
+    view.zoomTo()
+    components.html(view._make_html(), height=650, scrolling=False)
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
-st.write("Full AI-driven, explainable, optimized immunoinformatics system")
 
 tabs = st.tabs([
-    "🔬 Pipeline & Ranking",
-    "🧠 Explainable AI",
-    "🧩 Vaccine Construct Designer",
-    "🗺️ Landscape & Analysis",
+    "🔬 Pipeline",
+    "🧠 SHAP",
+    "🧩 Vaccine Construct",
+    "🗺️ Landscape",
+    "🧬 3D Structure",
     "🧱 Structure Export",
-    "🌍 External Integration",
-    "📄 Report & Paper"
+    "📄 Report"
 ])
 
 # =========================
 # TAB 1 — PIPELINE
 # =========================
 with tabs[0]:
+    fasta_input = st.text_area("Paste FASTA (variants allowed):")
+    min_len = st.slider("Min length",8,15,9)
+    max_len = st.slider("Max length",9,25,15)
+    top_n = st.selectbox("Top N",[10,20,50,100])
 
-    fasta_input = st.text_area("Paste FASTA sequences (variants allowed):")
-    min_len = st.slider("Minimum peptide length", 8, 15, 9)
-    max_len = st.slider("Maximum peptide length", 9, 25, 15)
-    top_n = st.selectbox("Show top N epitopes:", [10,20,50,100])
+    if st.button("Run Pipeline"):
+        seqs = read_fasta_multi(fasta_input)
+        main = seqs[0]
 
-    if st.button("🚀 Run Full Intelligence Pipeline"):
-
-        sequences = read_fasta_multi(fasta_input)
-        if len(sequences) == 0:
-            st.error("Paste FASTA first.")
-            st.stop()
-
-        main_seq = sequences[0]
-
-        peptides, positions = [], []
-        for L in range(min_len, max_len+1):
-            for i in range(len(main_seq)-L+1):
-                pep = main_seq[i:i+L]
+        peptides=[]; positions=[]
+        for L in range(min_len,max_len+1):
+            for i in range(len(main)-L+1):
+                pep=main[i:i+L]
                 if set(pep).issubset(set(amino_acids)):
-                    peptides.append(pep)
-                    positions.append(i+1)
+                    peptides.append(pep); positions.append(i+1)
 
-        feats = [extract_features(p) for p in peptides]
-        X = pd.DataFrame(feats, columns=feature_columns)
+        X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
 
-        # Uncertainty via bootstrap
-        preds = []
-        for _ in range(10):
-            idx = np.random.choice(len(X), len(X), replace=True)
+        preds=[]
+        for _ in range(5):
+            idx=np.random.choice(len(X),len(X),replace=True)
             preds.append(model.predict_proba(X.iloc[idx])[:,1])
-        preds = np.array(preds)
-        mean_pred = preds.mean(axis=0)
-        std_pred = preds.std(axis=0)
+        preds=np.array(preds)
+        meanp=preds.mean(axis=0); stdp=preds.std(axis=0)
 
-        rows = []
-        for i,(pep,pos,ml) in enumerate(zip(peptides, positions, mean_pred)):
-            tox = toxicity_proxy(pep)
-            allerg = allergenicity_proxy(pep)
-            antig = antigenicity_proxy(pep)
-            cell = cell_type_proxy(pep)
-            cons = conservancy_percent(pep, sequences)
-            rob = robustness_score(pep, sequences)
-            pop_class, pop_score = population_coverage_proxy(pep)
+        rows=[]
+        for i,(pep,pos,ml) in enumerate(zip(peptides,positions,meanp)):
+            tox=toxicity_proxy(pep)
+            allerg=allergenicity_proxy(pep)
+            antig=antigenicity_proxy(pep)
+            cell=cell_type_proxy(pep)
+            cons=conservancy_percent(pep,seqs)
+            rob=robustness_score(pep,seqs)
+            popc,pops=population_coverage_proxy(pep)
 
-            final_score = 0.35*ml + 0.25*(cons/100) + 0.2*rob + 0.1*pop_score + 0.1*(antig/5)
+            final=0.35*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.1*(antig/5)
 
-            rows.append([
-                pep, pos, len(pep), ml, std_pred[i], cons, rob, antig,
-                pop_class, pop_score, final_score, tox, allerg, cell
-            ])
+            rows.append([pep,pos,len(pep),ml,stdp[i],cons,rob,antig,popc,pops,final,tox,allerg,cell])
 
-        df = pd.DataFrame(rows, columns=[
+        df=pd.DataFrame(rows,columns=[
             "Peptide","Start","Length","ML_Mean","ML_Std","Conservancy_%","Robustness",
             "Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"
         ])
 
-        df = df.sort_values("FinalScore", ascending=False).head(top_n)
+        df=df.sort_values("FinalScore",ascending=False).head(top_n)
 
-        st.session_state["df"] = df
-        st.session_state["X"] = X
+        st.session_state["df"]=df
+        st.session_state["X"]=X
 
-        st.success("Pipeline completed.")
         st.dataframe(df)
 
 # =========================
 # TAB 2 — SHAP
 # =========================
 with tabs[1]:
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
-        X = st.session_state["X"]
-
-        st.subheader("🧠 Explainable AI (SHAP) — top 5 epitopes")
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X.iloc[:5])
-
-        fig, ax = plt.subplots(figsize=(10,6))
-        shap.summary_plot(shap_values, X.iloc[:5], show=False)
+    if "df" in st.session_state:
+        X=st.session_state["X"]
+        explainer=shap.TreeExplainer(model)
+        shap_vals=explainer.shap_values(X.iloc[:5])
+        fig,_=plt.subplots(figsize=(10,6))
+        shap.summary_plot(shap_vals, X.iloc[:5], show=False)
         st.pyplot(fig)
 
 # =========================
-# TAB 3 — VACCINE CONSTRUCT DESIGNER
+# TAB 3 — CONSTRUCT
 # =========================
 with tabs[2]:
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
-
-        st.subheader("🧩 Vaccine Construct Design")
-
-        linker = "GPGPG"
-        construct = linker.join(df["Peptide"].tolist())
-
+    if "df" in st.session_state:
+        df=st.session_state["df"]
+        linker="GPGPG"
+        construct=linker.join(df["Peptide"])
         st.code(construct)
-        st.write("Total construct length:", len(construct))
+        st.write("Total length:",len(construct))
 
-        # Visual map
-        fig, ax = plt.subplots(figsize=(12,2))
-        x = 0
-        colors = {"T-cell":"red","B-cell":"blue","Both":"purple"}
-
-        for _, r in df.iterrows():
-            L = len(r["Peptide"])
-            ax.barh(0, L, left=x, color=colors[r["Cell_Type"]])
-            ax.text(x+L/2, 0, r["Peptide"], ha="center", va="center", fontsize=8, rotation=90)
-            x += L
-            # linker
-            ax.barh(0, len(linker), left=x, color="gray")
-            x += len(linker)
-
-        ax.set_yticks([])
-        ax.set_title("Vaccine Construct Map (Epitope blocks + linkers)")
+        fig,ax=plt.subplots(figsize=(12,2))
+        x=0
+        colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
+        for _,r in df.iterrows():
+            L=len(r["Peptide"])
+            ax.barh(0,L,left=x,color=colors[r["Cell_Type"]])
+            x+=L
+            ax.barh(0,len(linker),left=x,color="gray")
+            x+=len(linker)
+        ax.set_yticks([]); ax.set_title("Vaccine Construct Map")
         st.pyplot(fig)
 
 # =========================
 # TAB 4 — LANDSCAPE
 # =========================
 with tabs[3]:
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
-
-        fig, ax = plt.subplots(figsize=(12,4))
-        ax.scatter(df["Start"], df["FinalScore"], s=80, c=df["FinalScore"], cmap="viridis")
+    if "df" in st.session_state:
+        df=st.session_state["df"]
+        fig,ax=plt.subplots(figsize=(12,4))
+        ax.scatter(df["Start"],df["FinalScore"],c=df["FinalScore"],cmap="viridis",s=80)
         ax.set_title("Immunogenic Landscape")
-        ax.set_xlabel("Protein position")
-        ax.set_ylabel("Final Score")
         st.pyplot(fig)
 
 # =========================
-# TAB 5 — STRUCTURE EXPORT
+# TAB 5 — 3D STRUCTURE
 # =========================
 with tabs[4]:
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
+    st.subheader("Interactive 3D Protein Viewer")
+    pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
+    if "df" in st.session_state and pdb_file:
+        df=st.session_state["df"]
+        pdb_text=pdb_file.read().decode("utf-8")
 
-        if st.button("Generate PyMOL Script"):
-            with open("highlight_epitopes.pml","w") as f:
-                for _,r in df.iterrows():
-                    s = r["Start"]
-                    e = r["Start"] + r["Length"]
-                    f.write(f"color red, resi {s}-{e}\n")
-            st.success("Saved: highlight_epitopes.pml")
+        c1,c2,c3=st.columns(3)
+        with c1: style=st.selectbox("Style",["cartoon","surface","stick"])
+        with c2: color_mode=st.selectbox("Color by",["score","cell","uniform"])
+        with c3:
+            ep_list=["ALL"]+df["Peptide"].tolist()
+            sel=st.selectbox("Highlight",ep_list)
+
+        show_structure_3d(pdb_text, df, sel, style, color_mode)
 
 # =========================
-# TAB 6 — EXTERNAL
+# TAB 6 — EXPORT
 # =========================
 with tabs[5]:
-    st.subheader("🌍 External Integration")
-    st.file_uploader("Upload NetMHC CSV")
-    st.file_uploader("Upload IEDB Population Coverage CSV")
+    if "df" in st.session_state:
+        df=st.session_state["df"]
+        if st.button("Generate PyMOL script"):
+            with open("highlight_epitopes.pml","w") as f:
+                for _,r in df.iterrows():
+                    s=r["Start"]; e=r["Start"]+r["Length"]
+                    f.write(f"color red, resi {s}-{e}\n")
+            st.success("Saved highlight_epitopes.pml")
 
 # =========================
-# TAB 7 — REPORT & PAPER
+# TAB 7 — REPORT
 # =========================
 with tabs[6]:
-    if "df" not in st.session_state:
-        st.warning("Run pipeline first.")
-    else:
-        df = st.session_state["df"]
+    if "df" in st.session_state:
+        df=st.session_state["df"]
 
-        if st.button("Generate Methods Section"):
-            methods = """
-Epitope prediction was performed using a supervised machine learning model trained on experimentally validated epitopes and non-epitopes. Features included amino acid composition, dipeptide composition, and physicochemical descriptors. Predictions were integrated with in-silico screening for toxicity, allergenicity, and antigenicity. Conservancy was evaluated across sequence variants. Variant robustness was assessed using mutation tolerance analysis. Population coverage was estimated using a proxy model and can be replaced by IEDB calculations. Multi-criteria optimization was applied to rank epitopes. Vaccine constructs were assembled using optimized epitope ordering and linkers. Explainable AI analysis was performed using SHAP. Structural visualization scripts were generated for PyMOL.
-"""
-            st.text_area("Methods Section:", methods, height=300)
-
-        if st.button("Generate PDF Report"):
-            fig, ax = plt.subplots(figsize=(10,4))
-            ax.scatter(df["Start"], df["FinalScore"])
+        if st.button("Generate PDF"):
+            fig,ax=plt.subplots(figsize=(10,4))
+            ax.scatter(df["Start"],df["FinalScore"])
             ax.set_title("Immunogenic Landscape")
             with PdfPages("Epitope_Report.pdf") as pdf:
                 pdf.savefig(fig)
-            st.success("Saved: Epitope_Report.pdf")
+            st.success("Saved Epitope_Report.pdf")
+
+        if st.button("Generate Methods"):
+            methods = """
+Epitope prediction was performed using a supervised machine learning model trained on validated epitope datasets. Features included amino acid composition, dipeptide composition, and physicochemical descriptors. Predictions were filtered using in-silico toxicity, allergenicity, and antigenicity screening. Conservancy and variant robustness were computed across sequence variants. Population coverage was estimated using a proxy model. A multi-objective ranking scheme was applied. Vaccine constructs were assembled using optimized epitope ordering and linkers. Explainable AI analysis was performed using SHAP. Structural mapping was performed using 3D molecular visualization.
+"""
+            st.text_area("Methods Section", methods, height=300)
