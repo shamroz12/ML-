@@ -418,13 +418,36 @@ with tabs[3]:
         st.pyplot(fig)
 
 # =========================
-# TAB 5 — 3D
+# TAB 5 — 3D STRUCTURE
 # =========================
 with tabs[4]:
-    pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
-    if "df" in st.session_state and pdb_file:
-        pdb_text=pdb_file.read().decode("utf-8")
-       show_structure_3d_advanced(pdb_text, st.session_state["df"])
+    st.subheader("🧬 Interactive 3D Protein Viewer")
+
+    pdb_file = st.file_uploader("Upload PDB file", type=["pdb"])
+
+    if "df" in st.session_state and pdb_file is not None:
+        df = st.session_state["df"]
+        pdb_text = pdb_file.read().decode("utf-8")
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere"])
+
+        with c2:
+            color_mode = st.selectbox("Color by", ["score", "cell", "conservancy", "uniform"])
+
+        with c3:
+            ep_list = ["ALL"] + df["Peptide"].tolist()
+            selected = st.selectbox("Focus epitope", ep_list)
+
+        show_structure_3d_advanced(
+            pdb_text=pdb_text,
+            df=df,
+            mode=selected,
+            style=style,
+            color_mode=color_mode
+        )
 
 # =========================
 # TAB 6 — EXPORT
