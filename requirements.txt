@@ -4,6 +4,7 @@ pandas
 scikit-learn
 matplotlib
 seaborn
+py3Dmol
 joblib
 xgboost
 shap
