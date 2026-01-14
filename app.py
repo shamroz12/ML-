@@ -148,26 +148,136 @@ def population_coverage_proxy(seq):
 # =========================
 # 3D viewer
 # =========================
-def show_structure_3d(pdb_text, df):
-    view = py3Dmol.view(width=900, height=600)
+def show_structure_3d_advanced(pdb_text, df):
+    view = py3Dmol.view(width=1000, height=700)
     view.addModel(pdb_text, "pdb")
-    view.setStyle({"cartoon":{"color":"lightgray"}})
 
-    scores=df["FinalScore"].values
-    mn, mx = scores.min(), scores.max()
+    # -----------------------------
+    # UI controls
+    # -----------------------------
+    col1, col2, col3, col4 = st.columns(4)
 
-    def score_color(s):
-        x=(s-mn)/(mx-mn+1e-6)
-        r=int(255*x); b=int(255*(1-x))
+    with col1:
+        style = st.selectbox("Render style", ["cartoon", "surface", "stick", "sphere", "ballstick"])
+    with col2:
+        color_mode = st.selectbox("Color by", ["score", "cell", "conservancy", "uniform"])
+    with col3:
+        bg = st.selectbox("Background", ["white", "black", "gray"])
+    with col4:
+        opacity = st.slider("Surface opacity", 0.1, 1.0, 0.85)
+
+    st.markdown("### 🎯 Epitope Focus")
+    ep_list = ["ALL"] + df["Peptide"].tolist()
+    focus = st.selectbox("Focus epitope", ep_list)
+
+    # -----------------------------
+    # Background
+    # -----------------------------
+    view.setBackgroundColor(bg)
+
+    # -----------------------------
+    # Base style
+    # -----------------------------
+    if style == "cartoon":
+        view.setStyle({"cartoon": {"color": "lightgray"}})
+    elif style == "surface":
+        view.setStyle({"surface": {"opacity": opacity, "color": "lightgray"}})
+    elif style == "stick":
+        view.setStyle({"stick": {}})
+    elif style == "sphere":
+        view.setStyle({"sphere": {"scale": 0.3}})
+    elif style == "ballstick":
+        view.setStyle({"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}})
+
+    # -----------------------------
+    # Color scaling
+    # -----------------------------
+    scores = df["FinalScore"].values
+    cons = df["Conservancy_%"].values
+
+    smin, smax = scores.min(), scores.max()
+    cmin, cmax = cons.min(), cons.max()
+
+    def score_color(x):
+        t = (x - smin) / (smax - smin + 1e-6)
+        r = int(255 * t)
+        b = int(255 * (1 - t))
         return f"rgb({r},0,{b})"
 
-    for _,r in df.iterrows():
-        s=int(r["Start"]); e=int(r["Start"]+r["Length"])
-        col=score_color(r["FinalScore"])
-        view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
+    def cons_color(x):
+        t = (x - cmin) / (cmax - cmin + 1e-6)
+        g = int(255 * t)
+        return f"rgb(0,{g},0)"
 
-    view.zoomTo()
-    components.html(view._make_html(), height=650, scrolling=False)
+    cell_colors = {
+        "T-cell": "red",
+        "B-cell": "blue",
+        "Both": "purple"
+    }
+
+    # -----------------------------
+    # Highlight epitopes
+    # -----------------------------
+    for _, r in df.iterrows():
+        pep = r["Peptide"]
+        start = int(r["Start"])
+        end = int(r["Start"] + r["Length"])
+
+        if focus != "ALL" and pep != focus:
+            continue
+
+        if color_mode == "score":
+            col = score_color(r["FinalScore"])
+        elif color_mode == "conservancy":
+            col = cons_color(r["Conservancy_%"])
+        elif color_mode == "cell":
+            col = cell_colors[r["Cell_Type"]]
+        else:
+            col = "orange"
+
+        sel = {"resi": list(range(start, end + 1))}
+
+        if style == "cartoon":
+            view.setStyle(sel, {"cartoon": {"color": col}})
+        elif style == "surface":
+            view.setStyle(sel, {"surface": {"color": col, "opacity": opacity}})
+        elif style == "stick":
+            view.setStyle(sel, {"stick": {"color": col}})
+        elif style == "sphere":
+            view.setStyle(sel, {"sphere": {"color": col}})
+        elif style == "ballstick":
+            view.setStyle(sel, {"stick": {"color": col}, "sphere": {"color": col}})
+
+        # Label epitope
+        view.addLabel(
+            pep,
+            {"position": {"resi": start}, "backgroundColor": "black", "fontColor": "white"}
+        )
+
+    # -----------------------------
+    # Zoom behavior
+    # -----------------------------
+    if focus == "ALL":
+        view.zoomTo()
+    else:
+        r = df[df["Peptide"] == focus].iloc[0]
+        start = int(r["Start"])
+        end = int(r["Start"] + r["Length"])
+        view.zoomTo({"resi": list(range(start, end + 1))})
+
+    # -----------------------------
+    # Spin control
+    # -----------------------------
+    if st.checkbox("Auto rotate"):
+        view.spin(True)
+    else:
+        view.spin(False)
+
+    # -----------------------------
+    # Render
+    # -----------------------------
+    components.html(view._make_html(), height=750, scrolling=False)
+)
 
 # =========================
 # Publication-grade construct plot
