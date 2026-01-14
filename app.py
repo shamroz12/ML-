@@ -11,7 +11,7 @@ from sklearn.preprocessing import StandardScaler
 # =========================
 # Page config
 # =========================
-st.set_page_config(page_title="Integrated Epitope Intelligence Platform", layout="wide")
+st.set_page_config(page_title="Epitope Intelligence Platform", layout="wide")
 
 # =========================
 # Load model
@@ -120,7 +120,7 @@ def conservancy_percent(peptide, sequences):
     return (count / len(sequences)) * 100
 
 # =========================
-# Variant robustness (mutation tolerance)
+# Variant robustness
 # =========================
 def robustness_score(peptide, sequences):
     L = len(peptide)
@@ -135,22 +135,23 @@ def robustness_score(peptide, sequences):
     return hits / total
 
 # =========================
-# Pareto front
+# Population coverage proxy
 # =========================
-def pareto_front(df, cols):
-    data = df[cols].values
-    is_efficient = np.ones(data.shape[0], dtype=bool)
-    for i, c in enumerate(data):
-        if is_efficient[i]:
-            is_efficient[is_efficient] = np.any(data[is_efficient] > c, axis=1)
-            is_efficient[i] = True
-    return df[is_efficient]
+def population_coverage_proxy(seq):
+    L = len(seq)
+    hydv = sum(hydro[a] for a in seq)/L
+    if L >= 9 and L <= 11 and hydv > 0.5:
+        return "Broad", 0.9
+    elif L >= 8:
+        return "Medium", 0.6
+    else:
+        return "Narrow", 0.3
 
 # =========================
 # UI
 # =========================
-st.title("🧬 Integrated Epitope Intelligence Platform")
-st.write("AI-driven Epitope Selection, Optimization & Vaccine Construct Design")
+st.title("🧬 Epitope Intelligence Platform (Phase-2)")
+st.write("Explainable, Robust, Population-Aware, Immunogenic Landscape System")
 
 fasta_input = st.text_area("Paste FASTA sequences (multiple variants supported):")
 
@@ -159,13 +160,13 @@ max_len = st.slider("Maximum peptide length", 9, 25, 15)
 top_n = st.selectbox("Show top N epitopes:", [10, 20, 50, 100])
 
 # =========================
-# Predict
+# Run pipeline
 # =========================
-if st.button("🔍 Run Epitope Intelligence Pipeline"):
+if st.button("🚀 Run Full Intelligence Pipeline"):
 
     sequences = read_fasta_multi(fasta_input)
     if len(sequences) == 0:
-        st.error("Please paste FASTA.")
+        st.error("Paste FASTA first.")
         st.stop()
 
     main_seq = sequences[0]
@@ -178,90 +179,109 @@ if st.button("🔍 Run Epitope Intelligence Pipeline"):
                 peptides.append(pep)
                 positions.append(i+1)
 
-    st.success(f"Generated {len(peptides)} peptides")
-
     feats = [extract_features(p) for p in peptides]
     X = pd.DataFrame(feats, columns=feature_columns)
-    probs = model.predict_proba(X)[:,1]
+
+    # =========================
+    # Uncertainty via bootstrap
+    # =========================
+    preds = []
+    for _ in range(10):
+        idx = np.random.choice(len(X), len(X), replace=True)
+        preds.append(model.predict_proba(X.iloc[idx])[:,1])
+
+    preds = np.array(preds)
+    mean_pred = preds.mean(axis=0)
+    std_pred = preds.std(axis=0)
 
     rows = []
-    for pep, pos, score in zip(peptides, positions, probs):
+    for i,(pep,pos,ml) in enumerate(zip(peptides, positions, mean_pred)):
         tox = toxicity_proxy(pep)
         allerg = allergenicity_proxy(pep)
         antig = antigenicity_proxy(pep)
         cell = cell_type_proxy(pep)
         cons = conservancy_percent(pep, sequences)
         rob = robustness_score(pep, sequences)
+        pop_class, pop_score = population_coverage_proxy(pep)
 
-        final_score = 0.4*score + 0.3*(cons/100) + 0.2*rob + 0.1*(antig/5)
+        final_score = 0.35*ml + 0.25*(cons/100) + 0.2*rob + 0.1*pop_score + 0.1*(antig/5)
 
-        rows.append([pep, pos, len(pep), score, cons, rob, antig, final_score, tox, allerg, cell])
+        rows.append([
+            pep, pos, len(pep), ml, std_pred[i], cons, rob, antig,
+            pop_class, pop_score, final_score, tox, allerg, cell
+        ])
 
     df = pd.DataFrame(rows, columns=[
-        "Peptide","Start","Length","ML_Score","Conservancy_%","Robustness",
-        "Antigenicity","FinalScore","Toxicity","Allergenicity","Cell_Type"
+        "Peptide","Start","Length","ML_Mean","ML_Std","Conservancy_%","Robustness",
+        "Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"
     ])
 
-    df = df.sort_values("FinalScore", ascending=False)
+    df = df.sort_values("FinalScore", ascending=False).head(top_n)
+
+    st.subheader("🏆 Final Ranked Epitope Set")
+    st.dataframe(df)
 
     # =========================
-    # Clustering
+    # Explainable AI (feature importance)
     # =========================
-    Z = StandardScaler().fit_transform(df[["ML_Score","Conservancy_%","Robustness","Antigenicity","FinalScore"]])
-    k = min(5, len(df))
-    kmeans = KMeans(n_clusters=k, n_init=10)
-    df["Cluster"] = kmeans.fit_predict(Z)
+    st.subheader("🧠 Explainable AI – Feature Importance")
 
-    # =========================
-    # Pareto front
-    # =========================
-    pareto = pareto_front(df, ["ML_Score","Conservancy_%","Robustness","FinalScore"])
+    try:
+        importances = model.feature_importances_
+        imp_df = pd.DataFrame({
+            "Feature": feature_columns,
+            "Importance": importances
+        }).sort_values("Importance", ascending=False).head(20)
 
-    # =========================
-    # Final selection
-    # =========================
-    df_final = df.head(top_n)
-
-    st.subheader("🏆 Final Optimized Epitope Set")
-    st.dataframe(df_final)
-
-    st.subheader("🎯 Pareto-Optimal Epitope Set")
-    st.dataframe(pareto.head(20))
+        fig1, ax1 = plt.subplots(figsize=(8,6))
+        sns.barplot(data=imp_df, x="Importance", y="Feature", ax=ax1)
+        ax1.set_title("Top 20 Important Features (XGBoost)")
+        st.pyplot(fig1)
+    except:
+        st.warning("Feature importance not available for this model.")
 
     # =========================
-    # Vaccine construct
+    # Immunogenic landscape
     # =========================
-    linker = "GPGPG"
-    construct = linker.join(df_final["Peptide"].tolist())
+    st.subheader("🗺️ Immunogenic Landscape Along Protein")
 
-    st.subheader("🧩 Auto-Designed Vaccine Construct")
-    st.code(construct)
-    st.write("Construct length:", len(construct))
+    window = 20
+    xs, ys = [], []
+    for i in range(1, len(main_seq)-window):
+        local = df[(df["Start"]>=i) & (df["Start"]<=i+window)]
+        if len(local) > 0:
+            xs.append(i)
+            ys.append(local["FinalScore"].mean())
+
+    fig2, ax2 = plt.subplots(figsize=(12,4))
+    ax2.plot(xs, ys)
+    ax2.set_xlabel("Protein Position")
+    ax2.set_ylabel("Mean Immunogenic Score")
+    ax2.set_title("Immunogenic Landscape")
+    st.pyplot(fig2)
 
     # =========================
-    # Plots
+    # Confidence distribution
     # =========================
-    st.subheader("📊 Intelligence Dashboard")
+    st.subheader("📊 Prediction Confidence / Uncertainty")
 
-    fig, axes = plt.subplots(2,2, figsize=(12,10))
+    fig3, ax3 = plt.subplots(figsize=(8,4))
+    sns.histplot(df["ML_Std"], kde=True, ax=ax3)
+    ax3.set_title("Prediction Uncertainty (Std Dev)")
+    st.pyplot(fig3)
 
-    sns.scatterplot(data=df, x="Conservancy_%", y="FinalScore", hue="Cluster", ax=axes[0,0])
-    axes[0,0].set_title("Clustering in Conservancy vs Score")
+    # =========================
+    # Population coverage summary
+    # =========================
+    st.subheader("🌍 Population Coverage Summary")
 
-    sns.scatterplot(data=df, x="Robustness", y="FinalScore", ax=axes[0,1])
-    axes[0,1].set_title("Robustness vs Score")
-
-    sns.histplot(df["FinalScore"], kde=True, ax=axes[1,0])
-    axes[1,0].set_title("Final Score Distribution")
-
-    sns.scatterplot(data=df, x="Start", y="FinalScore", size="Length", ax=axes[1,1])
-    axes[1,1].set_title("Epitope Hotspot Landscape")
-
-    plt.tight_layout()
-    st.pyplot(fig)
+    fig4, ax4 = plt.subplots(figsize=(6,4))
+    df["PopClass"].value_counts().plot(kind="bar", ax=ax4)
+    ax4.set_title("Coverage Class Distribution")
+    st.pyplot(fig4)
 
     # =========================
     # Download
     # =========================
-    csv = df_final.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Final Epitope Set", csv, "final_epitopes.csv", "text/csv")
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Final Epitope Table", csv, "final_epitopes.csv", "text/csv")
