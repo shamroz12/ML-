@@ -91,7 +91,7 @@ def cell_type_proxy(seq):
         return "Both"
 
 # =========================
-# FASTA (multi)
+# FASTA multi
 # =========================
 def read_fasta_multi(text):
     seqs = []
@@ -123,7 +123,6 @@ fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):", 
 
 min_len = st.slider("Minimum peptide length", 8, 15, 9)
 max_len = st.slider("Maximum peptide length", 9, 25, 15)
-
 top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100])
 
 # =========================
@@ -159,65 +158,4 @@ if st.button("🔍 Predict Epitopes"):
         allerg = allergenicity_proxy(pep)
         antig = antigenicity_proxy(pep)
         cell = cell_type_proxy(pep)
-        cons = conservancy_percent(pep, sequences)
-
-        final_score = 0.5*score + 0.3*(cons/100) + 0.2*(antig/5)
-
-        rows.append([pep, pos, len(pep), score, cons, antig, final_score, tox, allerg, cell])
-
-    df = pd.DataFrame(rows, columns=[
-        "Peptide","Start","Length","ML_Score","Conservancy_%","Antigenicity",
-        "FinalScore","Toxicity","Allergenicity","Cell_Type"
-    ])
-
-    df = df.sort_values("FinalScore", ascending=False).head(top_n)
-
-    # =========================
-    # Results table
-    # =========================
-    st.subheader("✅ Final Integrated Epitope Ranking")
-    st.dataframe(df, use_container_width=True)
-
-    # =========================
-    # Visual dashboard
-    # =========================
-    st.subheader("📊 Analysis Dashboard")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("### 📏 Length Distribution")
-        st.bar_chart(df["Length"].value_counts().sort_index())
-
-    with col2:
-        st.markdown("### 🧬 Cell Type")
-        st.bar_chart(df["Cell_Type"].value_counts())
-
-    with col3:
-        st.markdown("### ☣️ Toxicity")
-        st.bar_chart(df["Toxicity"].value_counts())
-
-    st.markdown("### 🧪 Conservancy Distribution")
-    st.bar_chart(pd.cut(df["Conservancy_%"], bins=10).value_counts().sort_index())
-
-    st.markdown("### 📍 Epitope Hotspot Map")
-    hotspot = pd.DataFrame({"Position": df["Start"], "Score": df["FinalScore"]}).set_index("Position")
-    st.line_chart(hotspot)
-
-    st.markdown("### 🧹 Screening Funnel")
-    funnel = pd.DataFrame({
-        "Stage": ["All", "Non-Toxic", "Non-Allergenic", "Final"],
-        "Count": [
-            len(rows),
-            sum(r[7]=="Low" for r in rows),
-            sum((r[7]=="Low" and r[8]=="Low") for r in rows),
-            len(df)
-        ]
-    }).set_index("Stage")
-    st.bar_chart(funnel)
-
-    # =========================
-    # Download
-    # =========================
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+        cons = conservancy_pe_
