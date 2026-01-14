@@ -9,13 +9,12 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from matplotlib.backends.backend_pdf import PdfPages
 import shap
-import textwrap
 import os
 
 # =========================
 # Page config
 # =========================
-st.set_page_config(page_title="Epitope Intelligence Platform (Phase-3)", layout="wide")
+st.set_page_config(page_title="Unified Epitope Intelligence & Vaccine Design Platform", layout="wide")
 
 # =========================
 # Load model
@@ -75,7 +74,7 @@ def extract_features(seq):
     return aa + dp + [len(seq), mw, hydv, aromatic]
 
 # =========================
-# Screening proxies
+# Screening & biology proxies
 # =========================
 def toxicity_proxy(seq):
     hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
@@ -120,8 +119,7 @@ def read_fasta_multi(text):
 # Conservancy & robustness
 # =========================
 def conservancy_percent(peptide, sequences):
-    count = sum(peptide in s for s in sequences)
-    return (count / len(sequences)) * 100
+    return 100 * sum(peptide in s for s in sequences) / len(sequences)
 
 def robustness_score(peptide, sequences):
     L = len(peptide)
@@ -140,7 +138,7 @@ def robustness_score(peptide, sequences):
 def population_coverage_proxy(seq):
     L = len(seq)
     hydv = sum(hydro[a] for a in seq)/L
-    if L >= 9 and L <= 11 and hydv > 0.5:
+    if 9 <= L <= 11 and hydv > 0.5:
         return "Broad", 0.9
     elif L >= 8:
         return "Medium", 0.6
@@ -150,15 +148,16 @@ def population_coverage_proxy(seq):
 # =========================
 # UI
 # =========================
-st.title("🧬 Epitope Intelligence Platform – Phase-3 (Publication System)")
-st.write("Explainable • Robust • Population-aware • Vaccine Construct Designer")
+st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
+st.write("Full AI-driven, explainable, optimized immunoinformatics system")
 
 tabs = st.tabs([
-    "🔬 Run Pipeline",
+    "🔬 Pipeline & Ranking",
     "🧠 Explainable AI",
+    "🧩 Vaccine Construct Designer",
+    "🗺️ Landscape & Analysis",
+    "🧱 Structure Export",
     "🌍 External Integration",
-    "📊 Landscape & Analysis",
-    "🧬 Structure Export",
     "📄 Report & Paper"
 ])
 
@@ -235,17 +234,13 @@ with tabs[0]:
 # TAB 2 — SHAP
 # =========================
 with tabs[1]:
-
-    st.subheader("🧠 Explainable AI (SHAP)")
-
     if "df" not in st.session_state:
         st.warning("Run pipeline first.")
     else:
         df = st.session_state["df"]
         X = st.session_state["X"]
 
-        st.write("Computing SHAP for top 5 epitopes only (for speed).")
-
+        st.subheader("🧠 Explainable AI (SHAP) — top 5 epitopes")
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X.iloc[:5])
 
@@ -254,24 +249,44 @@ with tabs[1]:
         st.pyplot(fig)
 
 # =========================
-# TAB 3 — EXTERNAL
+# TAB 3 — VACCINE CONSTRUCT DESIGNER
 # =========================
 with tabs[2]:
+    if "df" not in st.session_state:
+        st.warning("Run pipeline first.")
+    else:
+        df = st.session_state["df"]
 
-    st.subheader("🌍 External Immunology Integration")
+        st.subheader("🧩 Vaccine Construct Design")
 
-    st.write("Upload NetMHC / IEDB result CSV files here and integrate manually into ranking.")
+        linker = "GPGPG"
+        construct = linker.join(df["Peptide"].tolist())
 
-    mhc_file = st.file_uploader("Upload NetMHC / MHC binding CSV")
-    popcov_file = st.file_uploader("Upload IEDB Population Coverage CSV")
+        st.code(construct)
+        st.write("Total construct length:", len(construct))
 
-    st.info("These results should be used for final experimental selection and reporting.")
+        # Visual map
+        fig, ax = plt.subplots(figsize=(12,2))
+        x = 0
+        colors = {"T-cell":"red","B-cell":"blue","Both":"purple"}
+
+        for _, r in df.iterrows():
+            L = len(r["Peptide"])
+            ax.barh(0, L, left=x, color=colors[r["Cell_Type"]])
+            ax.text(x+L/2, 0, r["Peptide"], ha="center", va="center", fontsize=8, rotation=90)
+            x += L
+            # linker
+            ax.barh(0, len(linker), left=x, color="gray")
+            x += len(linker)
+
+        ax.set_yticks([])
+        ax.set_title("Vaccine Construct Map (Epitope blocks + linkers)")
+        st.pyplot(fig)
 
 # =========================
 # TAB 4 — LANDSCAPE
 # =========================
 with tabs[3]:
-
     if "df" not in st.session_state:
         st.warning("Run pipeline first.")
     else:
@@ -288,7 +303,6 @@ with tabs[3]:
 # TAB 5 — STRUCTURE EXPORT
 # =========================
 with tabs[4]:
-
     if "df" not in st.session_state:
         st.warning("Run pipeline first.")
     else:
@@ -302,40 +316,33 @@ with tabs[4]:
                     f.write(f"color red, resi {s}-{e}\n")
             st.success("Saved: highlight_epitopes.pml")
 
-        if st.button("Generate ChimeraX Script"):
-            with open("highlight_epitopes.cxc","w") as f:
-                for _,r in df.iterrows():
-                    s = r["Start"]
-                    e = r["Start"] + r["Length"]
-                    f.write(f"color red :{s}-{e}\n")
-            st.success("Saved: highlight_epitopes.cxc")
-
 # =========================
-# TAB 6 — REPORT & PAPER
+# TAB 6 — EXTERNAL
 # =========================
 with tabs[5]:
+    st.subheader("🌍 External Integration")
+    st.file_uploader("Upload NetMHC CSV")
+    st.file_uploader("Upload IEDB Population Coverage CSV")
 
-    st.subheader("📄 Report & Manuscript Generator")
-
+# =========================
+# TAB 7 — REPORT & PAPER
+# =========================
+with tabs[6]:
     if "df" not in st.session_state:
         st.warning("Run pipeline first.")
     else:
         df = st.session_state["df"]
 
         if st.button("Generate Methods Section"):
-
             methods = """
-Epitope prediction was performed using a supervised machine learning model trained on experimentally validated epitopes and non-epitopes. Features included amino acid composition, dipeptide composition, and physicochemical descriptors. Predictions were further integrated with in-silico screening for toxicity, allergenicity, and antigenicity. Conservancy was evaluated across multiple sequence variants. Variant robustness was assessed using single-point mutation tolerance analysis. Population coverage was estimated using a heuristic proxy model and can be replaced by IEDB population coverage calculations. Multi-objective optimization was applied to prioritize epitopes. A vaccine construct was generated using optimized epitope ordering and linker insertion. Explainable AI analysis was performed using SHAP to interpret model decisions. Structural visualization scripts were generated for PyMOL and ChimeraX.
+Epitope prediction was performed using a supervised machine learning model trained on experimentally validated epitopes and non-epitopes. Features included amino acid composition, dipeptide composition, and physicochemical descriptors. Predictions were integrated with in-silico screening for toxicity, allergenicity, and antigenicity. Conservancy was evaluated across sequence variants. Variant robustness was assessed using mutation tolerance analysis. Population coverage was estimated using a proxy model and can be replaced by IEDB calculations. Multi-criteria optimization was applied to rank epitopes. Vaccine constructs were assembled using optimized epitope ordering and linkers. Explainable AI analysis was performed using SHAP. Structural visualization scripts were generated for PyMOL.
 """
-            st.text_area("Methods Section (copy into paper):", methods, height=300)
+            st.text_area("Methods Section:", methods, height=300)
 
         if st.button("Generate PDF Report"):
-
             fig, ax = plt.subplots(figsize=(10,4))
             ax.scatter(df["Start"], df["FinalScore"])
             ax.set_title("Immunogenic Landscape")
-
             with PdfPages("Epitope_Report.pdf") as pdf:
                 pdf.savefig(fig)
-
             st.success("Saved: Epitope_Report.pdf")
