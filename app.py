@@ -166,6 +166,96 @@ def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="sco
 
     view.zoomTo()
     components.html(view._make_html(), height=650, scrolling=False)
+    def draw_vaccine_construct_figure(df, linker="GPGPG", save_path=None):
+
+    fig, ax = plt.subplots(figsize=(16, 3), dpi=300)
+
+    colors = {
+        "T-cell": "#d62728",   # red
+        "B-cell": "#1f77b4",   # blue
+        "Both": "#9467bd"      # purple
+    }
+
+    x = 0
+    y = 0.5
+    height = 0.3
+
+    total_len = 0
+
+    for i, r in df.iterrows():
+        pep = r["Peptide"]
+        L = len(pep)
+        ctype = r["Cell_Type"]
+
+        # Draw epitope block
+        ax.add_patch(
+            plt.Rectangle(
+                (x, y), L, height,
+                facecolor=colors.get(ctype, "black"),
+                edgecolor="black"
+            )
+        )
+
+        # Label epitope
+        ax.text(
+            x + L/2, y + height/2,
+            pep,
+            ha="center", va="center",
+            fontsize=8, rotation=90, color="white", fontweight="bold"
+        )
+
+        x += L
+        total_len += L
+
+        # Draw linker (except after last)
+        if i != df.index[-1]:
+            Lk = len(linker)
+            ax.add_patch(
+                plt.Rectangle(
+                    (x, y), Lk, height,
+                    facecolor="#7f7f7f",
+                    edgecolor="black",
+                    hatch="//"
+                )
+            )
+
+            ax.text(
+                x + Lk/2, y + height/2,
+                linker,
+                ha="center", va="center",
+                fontsize=7, rotation=90, color="white"
+            )
+
+            x += Lk
+            total_len += Lk
+
+    # Formatting
+    ax.set_xlim(0, x)
+    ax.set_ylim(0, 1.2)
+    ax.set_yticks([])
+    ax.set_xlabel("Amino acid position in construct", fontsize=12)
+    ax.set_title("Multi-epitope Vaccine Construct Architecture", fontsize=16, fontweight="bold")
+
+    # Scale bar
+    ax.plot([0, total_len], [0.25, 0.25], color="black", lw=2)
+    ax.text(total_len/2, 0.18, f"Total length = {total_len} aa", ha="center", fontsize=11)
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=colors["T-cell"], label="T-cell epitope"),
+        Patch(facecolor=colors["B-cell"], label="B-cell epitope"),
+        Patch(facecolor=colors["Both"], label="B/T epitope"),
+        Patch(facecolor="#7f7f7f", label="Linker (GPGPG)", hatch="//")
+    ]
+    ax.legend(handles=legend_elements, loc="upper center", ncol=4, frameon=False)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig
 
 # =========================
 # UI
@@ -250,27 +340,35 @@ with tabs[1]:
         st.pyplot(fig)
 
 # =========================
-# TAB 3 — CONSTRUCT
+# TAB 3 — VACCINE CONSTRUCT DESIGNER (PUBLICATION-GRADE)
 # =========================
 with tabs[2]:
-    if "df" in st.session_state:
-        df=st.session_state["df"]
-        linker="GPGPG"
-        construct=linker.join(df["Peptide"])
-        st.code(construct)
-        st.write("Total length:",len(construct))
 
-        fig,ax=plt.subplots(figsize=(12,2))
-        x=0
-        colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
-        for _,r in df.iterrows():
-            L=len(r["Peptide"])
-            ax.barh(0,L,left=x,color=colors[r["Cell_Type"]])
-            x+=L
-            ax.barh(0,len(linker),left=x,color="gray")
-            x+=len(linker)
-        ax.set_yticks([]); ax.set_title("Vaccine Construct Map")
+    st.subheader("🧩 Multi-Epitope Vaccine Construct Designer")
+
+    if "df" not in st.session_state:
+        st.warning("Run pipeline first.")
+    else:
+        df = st.session_state["df"]
+
+        linker = "GPGPG"
+
+        construct = linker.join(df["Peptide"].tolist())
+
+        st.markdown("### 📌 Final Vaccine Construct Sequence")
+        st.code(construct)
+        st.write("Total construct length:", len(construct), "aa")
+
+        st.markdown("### 🖼️ Construct Architecture (Publication-Quality)")
+
+        fig = draw_vaccine_construct_figure(df, linker=linker)
         st.pyplot(fig)
+
+        # Save high-res image
+        if st.button("💾 Save High-Resolution Figure (PNG)"):
+            out_path = "Vaccine_Construct.png"
+            draw_vaccine_construct_figure(df, linker=linker, save_path=out_path)
+            st.success(f"Saved: {out_path}")
 
 # =========================
 # TAB 4 — LANDSCAPE
