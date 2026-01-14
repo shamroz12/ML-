@@ -1,5 +1,3 @@
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -72,8 +70,7 @@ def extract_features(seq):
 # Screening proxies
 # =========================
 def toxicity_proxy(seq):
-    hyd_val = sum(hydro.get(a,0) for a in seq)/len(seq)
-    return "High" if hyd_val > 2.5 else "Low"
+    return "High" if sum(hydro[a] for a in seq)/len(seq) > 2.5 else "Low"
 
 def allergenicity_proxy(seq):
     aromatic_frac = sum(a in "FWY" for a in seq) / len(seq)
@@ -86,7 +83,7 @@ def antigenicity_proxy(seq):
 def cell_type_proxy(seq):
     L = len(seq)
     hyd_val = sum(hydro[a] for a in seq)/len(seq)
-    if L >= 8 and L <= 11 and hyd_val > 1:
+    if 8 <= L <= 11 and hyd_val > 1:
         return "T-cell"
     elif hyd_val < 0:
         return "B-cell"
@@ -94,7 +91,7 @@ def cell_type_proxy(seq):
         return "Both"
 
 # =========================
-# FASTA parser (MULTI)
+# FASTA (multi)
 # =========================
 def read_fasta_multi(text):
     seqs = []
@@ -114,19 +111,15 @@ def read_fasta_multi(text):
 # Conservancy
 # =========================
 def conservancy_percent(peptide, sequences):
-    count = 0
-    for s in sequences:
-        if peptide in s:
-            count += 1
-    return (count / len(sequences)) * 100
+    return sum(peptide in s for s in sequences) / len(sequences) * 100
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("ML + Screening + Conservancy + Cell-Type integrated system")
+st.write("ML + Screening + Antigenicity + Conservancy + Cell-Type Integration")
 
-fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):")
+fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):", height=200)
 
 min_len = st.slider("Minimum peptide length", 8, 15, 9)
 max_len = st.slider("Maximum peptide length", 9, 25, 15)
@@ -145,8 +138,7 @@ if st.button("🔍 Predict Epitopes"):
 
     main_seq = sequences[0]
 
-    peptides = []
-    positions = []
+    peptides, positions = [], []
 
     for L in range(min_len, max_len+1):
         for i in range(len(main_seq) - L + 1):
@@ -155,7 +147,7 @@ if st.button("🔍 Predict Epitopes"):
                 peptides.append(pep)
                 positions.append(i+1)
 
-    st.write(f"Generated {len(peptides)} peptides")
+    st.success(f"Generated {len(peptides)} peptides")
 
     feats = [extract_features(p) for p in peptides]
     X = pd.DataFrame(feats, columns=feature_columns)
@@ -163,7 +155,6 @@ if st.button("🔍 Predict Epitopes"):
 
     rows = []
     for pep, pos, score in zip(peptides, positions, probs):
-        mw, hyd_val, aromatic = physchem(pep)
         tox = toxicity_proxy(pep)
         allerg = allergenicity_proxy(pep)
         antig = antigenicity_proxy(pep)
@@ -172,10 +163,7 @@ if st.button("🔍 Predict Epitopes"):
 
         final_score = 0.5*score + 0.3*(cons/100) + 0.2*(antig/5)
 
-        rows.append([
-            pep, pos, len(pep), score, cons, antig, final_score,
-            tox, allerg, cell
-        ])
+        rows.append([pep, pos, len(pep), score, cons, antig, final_score, tox, allerg, cell])
 
     df = pd.DataFrame(rows, columns=[
         "Peptide","Start","Length","ML_Score","Conservancy_%","Antigenicity",
@@ -184,158 +172,52 @@ if st.button("🔍 Predict Epitopes"):
 
     df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
+    # =========================
+    # Results table
+    # =========================
     st.subheader("✅ Final Integrated Epitope Ranking")
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
-# =========================
-# ADVANCED VISUAL DASHBOARD
-# =========================
-st.subheader("📊 Interactive Analysis Dashboard")
+    # =========================
+    # Visual dashboard
+    # =========================
+    st.subheader("📊 Analysis Dashboard")
 
-# -------- Layout: 2 columns --------
-col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
-# =========================
-# 1) Length distribution
-# =========================
-with col1:
-    st.markdown("### 📏 Epitope Length Distribution")
-    len_df = df["Length"].value_counts().sort_index().reset_index()
-    len_df.columns = ["Length", "Count"]
+    with col1:
+        st.markdown("### 📏 Length Distribution")
+        st.bar_chart(df["Length"].value_counts().sort_index())
 
-    fig_len = px.bar(
-        len_df, x="Length", y="Count",
-        color="Count",
-        color_continuous_scale="viridis",
-        title="Distribution of Epitope Lengths"
-    )
-    fig_len.update_layout(template="plotly_white")
-    st.plotly_chart(fig_len, use_container_width=True)
+    with col2:
+        st.markdown("### 🧬 Cell Type")
+        st.bar_chart(df["Cell_Type"].value_counts())
 
-# =========================
-# 2) Cell type distribution
-# =========================
-with col2:
-    st.markdown("### 🧬 Cell Type Distribution")
-    cell_df = df["Cell_Type"].value_counts().reset_index()
-    cell_df.columns = ["Cell_Type", "Count"]
+    with col3:
+        st.markdown("### ☣️ Toxicity")
+        st.bar_chart(df["Toxicity"].value_counts())
 
-    fig_cell = px.pie(
-        cell_df,
-        names="Cell_Type",
-        values="Count",
-        hole=0.4,
-        title="B-cell vs T-cell vs Both"
-    )
-    st.plotly_chart(fig_cell, use_container_width=True)
-
-# -------- Row 2 --------
-col3, col4 = st.columns(2)
-
-# =========================
-# 3) Toxicity profile
-# =========================
-with col3:
-    st.markdown("### ☣️ Toxicity Risk Profile")
-    tox_df = df["Toxicity"].value_counts().reset_index()
-    tox_df.columns = ["Risk", "Count"]
-
-    fig_tox = px.bar(
-        tox_df, x="Risk", y="Count",
-        color="Risk",
-        color_discrete_map={"Low":"green","High":"red"},
-        title="Toxicity Risk Distribution"
-    )
-    fig_tox.update_layout(template="plotly_white")
-    st.plotly_chart(fig_tox, use_container_width=True)
-
-# =========================
-# 4) Conservancy distribution
-# =========================
-with col4:
     st.markdown("### 🧪 Conservancy Distribution")
-    fig_cons = px.histogram(
-        df, x="Conservancy_%",
-        nbins=10,
-        title="Conservancy Percentage Distribution",
-        color_discrete_sequence=["#636EFA"]
-    )
-    fig_cons.update_layout(template="plotly_white")
-    st.plotly_chart(fig_cons, use_container_width=True)
+    st.bar_chart(pd.cut(df["Conservancy_%"], bins=10).value_counts().sort_index())
 
-# =========================
-# 5) Epitope hotspot landscape
-# =========================
-st.markdown("### 📍 Epitope Hotspot Landscape Along Protein")
+    st.markdown("### 📍 Epitope Hotspot Map")
+    hotspot = pd.DataFrame({"Position": df["Start"], "Score": df["FinalScore"]}).set_index("Position")
+    st.line_chart(hotspot)
 
-fig_hot = px.scatter(
-    df,
-    x="Start",
-    y="FinalScore",
-    size="Length",
-    color="FinalScore",
-    hover_data=["Peptide","Length","Conservancy_%","Cell_Type"],
-    color_continuous_scale="Turbo",
-    title="Epitope Hotspot Landscape Across Protein"
-)
+    st.markdown("### 🧹 Screening Funnel")
+    funnel = pd.DataFrame({
+        "Stage": ["All", "Non-Toxic", "Non-Allergenic", "Final"],
+        "Count": [
+            len(rows),
+            sum(r[7]=="Low" for r in rows),
+            sum((r[7]=="Low" and r[8]=="Low") for r in rows),
+            len(df)
+        ]
+    }).set_index("Stage")
+    st.bar_chart(funnel)
 
-fig_hot.update_layout(
-    xaxis_title="Protein Position",
-    yaxis_title="Final Epitope Score",
-    template="plotly_white"
-)
-
-st.plotly_chart(fig_hot, use_container_width=True)
-
-# =========================
-# 6) Screening funnel
-# =========================
-st.markdown("### 🧹 Screening Funnel Overview")
-
-funnel_df = pd.DataFrame({
-    "Stage": ["All Predicted", "Non-Toxic", "Non-Allergenic", "Final Selected"],
-    "Count": [
-        len(rows),
-        len(df[df["Toxicity"]=="Low"]),
-        len(df[(df["Toxicity"]=="Low") & (df["Allergenicity"]=="Low")]),
-        len(df)
-    ]
-})
-
-fig_funnel = px.funnel(
-    funnel_df,
-    x="Count",
-    y="Stage",
-    title="Epitope Screening Funnel"
-)
-
-st.plotly_chart(fig_funnel, use_container_width=True)
-       csv = df.to_csv(index=False).encode("utf-8")
-st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # =========================
+    # Download
+    # =========================
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
