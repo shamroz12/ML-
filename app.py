@@ -1,3 +1,7 @@
+# =========================
+# Unified Epitope Intelligence & Vaccine Design Platform
+# =========================
+
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -8,6 +12,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import shap
 import py3Dmol
 import streamlit.components.v1 as components
+import random
 
 # =========================
 # Page config
@@ -42,6 +47,18 @@ hydro = {
 "V":4.2,"W":-0.9,"Y":-1.3
 }
 
+SIGNAL_PEPTIDES = {
+    "None": "",
+    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
+    "IL2": "MYRMQLLSCIALSLALVTNS"
+}
+
+ADJUVANTS = {
+    "None": "",
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK",
+    "50S ribosomal": "MARGKKIGYSGLKDHAR..."
+}
+
 # =========================
 # Feature extraction
 # =========================
@@ -61,9 +78,9 @@ def dipeptide_composition(seq):
 def physchem(seq):
     L = len(seq)
     mw = sum(aa_weights.get(a,0) for a in seq)
-    hydv = sum(hydro.get(a,0) for a in seq)/L
+    hyd = sum(hydro.get(a,0) for a in seq)/L
     aromatic = sum(a in "FWY" for a in seq)/L
-    return mw, hydv, aromatic
+    return mw, hyd, aromatic
 
 def extract_features(seq):
     aa = aa_composition(seq)
@@ -131,13 +148,10 @@ def population_coverage_proxy(seq):
 # =========================
 # 3D viewer
 # =========================
-def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
+def show_structure_3d(pdb_text, df):
     view = py3Dmol.view(width=900, height=600)
     view.addModel(pdb_text, "pdb")
-
-    if style=="cartoon": view.setStyle({"cartoon":{"color":"lightgray"}})
-    if style=="surface": view.setStyle({"surface":{"opacity":0.9,"color":"lightgray"}})
-    if style=="stick": view.setStyle({"stick":{}})
+    view.setStyle({"cartoon":{"color":"lightgray"}})
 
     scores=df["FinalScore"].values
     mn, mx = scores.min(), scores.max()
@@ -147,135 +161,64 @@ def show_structure_3d(pdb_text, df, mode="ALL", style="cartoon", color_mode="sco
         r=int(255*x); b=int(255*(1-x))
         return f"rgb({r},0,{b})"
 
-    if mode!="ALL":
-        df = df[df["Peptide"]==mode]
-
     for _,r in df.iterrows():
         s=int(r["Start"]); e=int(r["Start"]+r["Length"])
-        if color_mode=="score": col=score_color(r["FinalScore"])
-        elif color_mode=="cell":
-            col={"T-cell":"red","B-cell":"blue","Both":"purple"}[r["Cell_Type"]]
-        else: col="orange"
-
-        view.setStyle({"resi":list(range(s,e+1))},{style:{"color":col}})
+        col=score_color(r["FinalScore"])
+        view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
 
     view.zoomTo()
     components.html(view._make_html(), height=650, scrolling=False)
 
 # =========================
-# Vaccine construct drawing
+# Publication-grade construct plot
 # =========================
-def draw_vaccine_construct_figure(df, linker="GPGPG", save_path=None):
-
-    fig, ax = plt.subplots(figsize=(16, 3), dpi=300)
+def draw_vaccine_construct_figure(df, linker="GPGPG", signal="", adjuvant="", save_path=None):
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    fig, ax = plt.subplots(figsize=(18, 4), dpi=300)
 
     colors = {"T-cell":"#d62728","B-cell":"#1f77b4","Both":"#9467bd"}
+    y=0.5; h=0.25; x=0
 
-    x = 0; y = 0.5; height = 0.3; total_len = 0
+    blocks=[]
+    if signal: blocks.append(("Signal", signal, "#2ca02c"))
+    if adjuvant: blocks.append(("Adjuvant", adjuvant, "#ff7f0e"))
 
-    for i, r in df.iterrows():
-        pep = r["Peptide"]; L = len(pep); ctype = r["Cell_Type"]
+    for i,r in df.iterrows():
+        blocks.append((r["Peptide"], r["Peptide"], colors[r["Cell_Type"]]))
+        if i!=df.index[-1]: blocks.append(("Linker", linker, "#7f7f7f"))
 
-        ax.add_patch(plt.Rectangle((x, y), L, height, facecolor=colors.get(ctype,"black"), edgecolor="black"))
-        ax.text(x+L/2, y+height/2, pep, ha="center", va="center", fontsize=8, rotation=90, color="white", fontweight="bold")
+    scores=df["FinalScore"].values; mn,mx=scores.min(),scores.max()
 
-        x += L; total_len += L
+    for label,seq,col in blocks:
+        L=len(seq)
+        alpha=0.9
+        if seq in df["Peptide"].values:
+            s=df[df["Peptide"]==seq]["FinalScore"].values[0]
+            alpha=0.4+0.6*((s-mn)/(mx-mn+1e-6))
 
-        if i != df.index[-1]:
-            Lk = len(linker)
-            ax.add_patch(plt.Rectangle((x, y), Lk, height, facecolor="#7f7f7f", edgecolor="black", hatch="//"))
-            ax.text(x+Lk/2, y+height/2, linker, ha="center", va="center", fontsize=7, rotation=90, color="white")
-            x += Lk; total_len += Lk
+        ax.add_patch(plt.Rectangle((x,y),L,h,facecolor=col,edgecolor="black",alpha=alpha))
+        ax.text(x+L/2,y+h/2,seq[:10]+"…" if len(seq)>10 else seq,ha="center",va="center",fontsize=8,rotation=90,color="white")
+        x+=L
 
-    ax.set_xlim(0, x); ax.set_ylim(0, 1.2); ax.set_yticks([])
-    ax.set_xlabel("Amino acid position"); ax.set_title("Multi-epitope Vaccine Construct Architecture", fontsize=16, fontweight="bold")
-    ax.plot([0, total_len], [0.25, 0.25], color="black", lw=2)
-    ax.text(total_len/2, 0.18, f"Total length = {total_len} aa", ha="center")
+    ax.set_xlim(0,x); ax.set_ylim(0,1.2); ax.set_yticks([])
+    ax.set_title("Optimized Multi-Epitope Vaccine Construct",fontsize=18,fontweight="bold")
+    ax.set_xlabel("Amino acid position")
 
-    plt.tight_layout()
-    if save_path: plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    if save_path:
+        plt.savefig(save_path,dpi=600,bbox_inches="tight")
+
     return fig
-# =========================
-# Construct optimization
-# =========================
-
-def junction_penalty(seq):
-    # penalize hydrophobic-hydrophobic junctions
-    penalty = 0
-    for i in range(len(seq)-1):
-        if hydro.get(seq[i],0) > 1 and hydro.get(seq[i+1],0) > 1:
-            penalty += 1
-    return penalty / len(seq)
-
-def hydrophobic_cluster_penalty(seq):
-    # penalize long hydrophobic stretches
-    penalty = 0
-    run = 0
-    for a in seq:
-        if hydro.get(a,0) > 1:
-            run += 1
-            if run >= 4:
-                penalty += run
-        else:
-            run = 0
-    return penalty / len(seq)
-
-def repeat_penalty(seq):
-    # penalize AAA, GGG etc
-    penalty = 0
-    for i in range(len(seq)-2):
-        if seq[i] == seq[i+1] == seq[i+2]:
-            penalty += 1
-    return penalty / len(seq)
-
-def construct_fitness(epitopes, df, linker="GPGPG"):
-    seq = linker.join(epitopes)
-
-    mean_score = df.set_index("Peptide").loc[epitopes]["FinalScore"].mean()
-
-    jpen = junction_penalty(seq)
-    hpen = hydrophobic_cluster_penalty(seq)
-    rpen = repeat_penalty(seq)
-
-    fitness = (
-        0.4 * mean_score
-        - 0.3 * jpen
-        - 0.2 * hpen
-        - 0.1 * rpen
-    )
-
-    return fitness, seq, jpen, hpen, rpen
-
-def optimize_construct(df, linker="GPGPG", n_iter=500):
-
-    epitopes = df["Peptide"].tolist()
-    best_order = epitopes.copy()
-    best_fitness, best_seq, best_j, best_h, best_r = construct_fitness(best_order, df, linker)
-
-    for _ in range(n_iter):
-        trial = best_order.copy()
-        np.random.shuffle(trial)
-
-        fit, seq, j, h, r = construct_fitness(trial, df, linker)
-
-        if fit > best_fitness:
-            best_fitness = fit
-            best_order = trial
-            best_seq = seq
-            best_j = j
-            best_h = h
-            best_r = r
-
-    return best_order, best_seq, best_fitness, best_j, best_h, best_r
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
 
-tabs = st.tabs(["🔬 Pipeline","🧠 SHAP","🧩 Vaccine Construct","🗺️ Landscape","🧬 3D Structure","🧱 Export","📄 Report"])
+tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Export","Report"])
 
-# ---------------- TAB 1 ----------------
+# =========================
+# TAB 1 — PIPELINE
+# =========================
 with tabs[0]:
     fasta_input = st.text_area("Paste FASTA (variants allowed):")
     min_len = st.slider("Min length",8,15,9)
@@ -294,23 +237,41 @@ with tabs[0]:
                     peptides.append(pep); positions.append(i+1)
 
         X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
-        meanp = model.predict_proba(X)[:,1]
+
+        preds=[]
+        for _ in range(5):
+            idx=np.random.choice(len(X),len(X),replace=True)
+            preds.append(model.predict_proba(X.iloc[idx])[:,1])
+        preds=np.array(preds)
+        meanp=preds.mean(axis=0); stdp=preds.std(axis=0)
 
         rows=[]
-        for pep,pos,ml in zip(peptides,positions,meanp):
-            tox=toxicity_proxy(pep); allerg=allergenicity_proxy(pep)
-            antig=antigenicity_proxy(pep); cell=cell_type_proxy(pep)
-            cons=conservancy_percent(pep,seqs); rob=robustness_score(pep,seqs)
+        for i,(pep,pos,ml) in enumerate(zip(peptides,positions,meanp)):
+            tox=toxicity_proxy(pep)
+            allerg=allergenicity_proxy(pep)
+            antig=antigenicity_proxy(pep)
+            cell=cell_type_proxy(pep)
+            cons=conservancy_percent(pep,seqs)
+            rob=robustness_score(pep,seqs)
             popc,pops=population_coverage_proxy(pep)
-            final=0.4*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.05*(antig/5)
-            rows.append([pep,pos,len(pep),ml,cons,rob,antig,popc,pops,final,tox,allerg,cell])
 
-        df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","Conservancy_%","Robustness","Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"])
+            final=0.35*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.1*(antig/5)
+
+            rows.append([pep,pos,len(pep),ml,stdp[i],cons,rob,antig,popc,pops,final,tox,allerg,cell])
+
+        df=pd.DataFrame(rows,columns=[
+            "Peptide","Start","Length","ML_Mean","ML_Std","Conservancy_%","Robustness",
+            "Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"
+        ])
+
         df=df.sort_values("FinalScore",ascending=False).head(top_n)
-        st.session_state["df"]=df; st.session_state["X"]=X
+        st.session_state["df"]=df
+        st.session_state["X"]=X
         st.dataframe(df)
 
-# ---------------- TAB 2 ----------------
+# =========================
+# TAB 2 — SHAP
+# =========================
 with tabs[1]:
     if "df" in st.session_state:
         X=st.session_state["X"]
@@ -320,48 +281,25 @@ with tabs[1]:
         shap.summary_plot(shap_vals, X.iloc[:5], show=False)
         st.pyplot(fig)
 
-# ---------------- TAB 3 ----------------
+# =========================
+# TAB 3 — VACCINE
+# =========================
 with tabs[2]:
     if "df" in st.session_state:
-        df = st.session_state["df"]
+        df=st.session_state["df"]
+        linker="GPGPG"
+        sig=st.selectbox("Signal",list(SIGNAL_PEPTIDES.keys()))
+        adj=st.selectbox("Adjuvant",list(ADJUVANTS.keys()))
 
-        st.subheader("🧩 Vaccine Construct Designer & Optimizer")
+        construct = SIGNAL_PEPTIDES[sig] + ADJUVANTS[adj] + linker.join(df["Peptide"].tolist())
+        st.code(construct)
 
-        linker = "GPGPG"
+        fig=draw_vaccine_construct_figure(df,linker,SIGNAL_PEPTIDES[sig],ADJUVANTS[adj])
+        st.pyplot(fig)
 
-        st.markdown("### 🔹 Baseline Construct (Ranked Order)")
-        baseline_order = df["Peptide"].tolist()
-        baseline_seq = linker.join(baseline_order)
-
-        st.code(baseline_seq)
-        st.write("Length:", len(baseline_seq), "aa")
-
-        if st.button("🚀 Optimize Construct Order"):
-
-            with st.spinner("Optimizing epitope order..."):
-                best_order, best_seq, best_fit, jpen, hpen, rpen = optimize_construct(df, linker, n_iter=800)
-
-            st.success("Optimization complete!")
-
-            st.markdown("### ✅ Optimized Construct")
-            st.code(best_seq)
-            st.write("Length:", len(best_seq), "aa")
-
-            st.markdown("### 📊 Optimization Metrics")
-            st.write("Fitness score:", round(best_fit, 4))
-            st.write("Junction penalty:", round(jpen, 4))
-            st.write("Hydrophobic clustering penalty:", round(hpen, 4))
-            st.write("Repeat penalty:", round(rpen, 4))
-
-            opt_df = df.set_index("Peptide").loc[best_order].reset_index()
-
-            st.markdown("### 🖼️ Optimized Construct Architecture")
-            fig = draw_vaccine_construct_figure(opt_df, linker=linker)
-            st.pyplot(fig)
-
-            st.session_state["optimized_construct"] = best_seq
-
-# ---------------- TAB 4 ----------------
+# =========================
+# TAB 4 — LANDSCAPE
+# =========================
 with tabs[3]:
     if "df" in st.session_state:
         df=st.session_state["df"]
@@ -370,35 +308,33 @@ with tabs[3]:
         ax.set_title("Immunogenic Landscape")
         st.pyplot(fig)
 
-# ---------------- TAB 5 ----------------
+# =========================
+# TAB 5 — 3D
+# =========================
 with tabs[4]:
     pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
     if "df" in st.session_state and pdb_file:
-        df=st.session_state["df"]
         pdb_text=pdb_file.read().decode("utf-8")
-        style=st.selectbox("Style",["cartoon","surface","stick"])
-        color_mode=st.selectbox("Color by",["score","cell","uniform"])
-        sel=st.selectbox("Highlight",["ALL"]+df["Peptide"].tolist())
-        show_structure_3d(pdb_text, df, sel, style, color_mode)
+        show_structure_3d(pdb_text, st.session_state["df"])
 
-# ---------------- TAB 6 ----------------
+# =========================
+# TAB 6 — EXPORT
+# =========================
 with tabs[5]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        if st.button("Generate PyMOL script"):
-            with open("highlight_epitopes.pml","w") as f:
-                for _,r in df.iterrows():
-                    s=r["Start"]; e=r["Start"]+r["Length"]
-                    f.write(f"color red, resi {s}-{e}\n")
-            st.success("Saved highlight_epitopes.pml")
+        csv=df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download CSV",csv,"epitopes.csv")
 
-# ---------------- TAB 7 ----------------
+# =========================
+# TAB 7 — REPORT
+# =========================
 with tabs[6]:
     if "df" in st.session_state:
-        df=st.session_state["df"]
         if st.button("Generate PDF"):
-            fig,ax=plt.subplots(figsize=(10,4))
+            df=st.session_state["df"]
+            fig,ax=plt.subplots()
             ax.scatter(df["Start"],df["FinalScore"])
-            with PdfPages("Epitope_Report.pdf") as pdf:
+            with PdfPages("Report.pdf") as pdf:
                 pdf.savefig(fig)
-            st.success("Saved Epitope_Report.pdf")
+            st.success("Saved Report.pdf")
