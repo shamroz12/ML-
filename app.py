@@ -5,11 +5,13 @@ import joblib
 from itertools import product
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 # =========================
 # Page config
 # =========================
-st.set_page_config(page_title="Integrated Epitope Prioritization Platform", layout="wide")
+st.set_page_config(page_title="Integrated Epitope Intelligence Platform", layout="wide")
 
 # =========================
 # Load model
@@ -94,7 +96,7 @@ def cell_type_proxy(seq):
         return "Both"
 
 # =========================
-# FASTA parser (MULTI)
+# FASTA parser
 # =========================
 def read_fasta_multi(text):
     seqs = []
@@ -118,21 +120,48 @@ def conservancy_percent(peptide, sequences):
     return (count / len(sequences)) * 100
 
 # =========================
+# Variant robustness (mutation tolerance)
+# =========================
+def robustness_score(peptide, sequences):
+    L = len(peptide)
+    hits = 0
+    for i in range(L):
+        for aa in amino_acids:
+            if aa != peptide[i]:
+                mut = peptide[:i] + aa + peptide[i+1:]
+                if any(mut in s for s in sequences):
+                    hits += 1
+    total = L * 19
+    return hits / total
+
+# =========================
+# Pareto front
+# =========================
+def pareto_front(df, cols):
+    data = df[cols].values
+    is_efficient = np.ones(data.shape[0], dtype=bool)
+    for i, c in enumerate(data):
+        if is_efficient[i]:
+            is_efficient[is_efficient] = np.any(data[is_efficient] > c, axis=1)
+            is_efficient[i] = True
+    return df[is_efficient]
+
+# =========================
 # UI
 # =========================
-st.title("🧬 Integrated Epitope Prioritization Platform")
-st.write("ML + Screening + Conservancy + Cell-Type + Integrated Ranking")
+st.title("🧬 Integrated Epitope Intelligence Platform")
+st.write("AI-driven Epitope Selection, Optimization & Vaccine Construct Design")
 
-fasta_input = st.text_area("Paste FASTA sequences (one or multiple variants):")
+fasta_input = st.text_area("Paste FASTA sequences (multiple variants supported):")
 
 min_len = st.slider("Minimum peptide length", 8, 15, 9)
 max_len = st.slider("Maximum peptide length", 9, 25, 15)
-top_n = st.selectbox("Show top N peptides:", [10, 20, 50, 100])
+top_n = st.selectbox("Show top N epitopes:", [10, 20, 50, 100])
 
 # =========================
 # Predict
 # =========================
-if st.button("🔍 Predict Epitopes"):
+if st.button("🔍 Run Epitope Intelligence Pipeline"):
 
     sequences = read_fasta_multi(fasta_input)
     if len(sequences) == 0:
@@ -141,9 +170,7 @@ if st.button("🔍 Predict Epitopes"):
 
     main_seq = sequences[0]
 
-    peptides = []
-    positions = []
-
+    peptides, positions = [], []
     for L in range(min_len, max_len+1):
         for i in range(len(main_seq) - L + 1):
             pep = main_seq[i:i+L]
@@ -159,69 +186,76 @@ if st.button("🔍 Predict Epitopes"):
 
     rows = []
     for pep, pos, score in zip(peptides, positions, probs):
-        mw, hydv, aromatic = physchem(pep)
         tox = toxicity_proxy(pep)
         allerg = allergenicity_proxy(pep)
         antig = antigenicity_proxy(pep)
         cell = cell_type_proxy(pep)
         cons = conservancy_percent(pep, sequences)
+        rob = robustness_score(pep, sequences)
 
-        final_score = 0.5*score + 0.3*(cons/100) + 0.2*(antig/5)
+        final_score = 0.4*score + 0.3*(cons/100) + 0.2*rob + 0.1*(antig/5)
 
-        rows.append([pep, pos, len(pep), score, cons, antig, final_score, tox, allerg, cell])
+        rows.append([pep, pos, len(pep), score, cons, rob, antig, final_score, tox, allerg, cell])
 
     df = pd.DataFrame(rows, columns=[
-        "Peptide","Start","Length","ML_Score","Conservancy_%","Antigenicity",
-        "FinalScore","Toxicity","Allergenicity","Cell_Type"
+        "Peptide","Start","Length","ML_Score","Conservancy_%","Robustness",
+        "Antigenicity","FinalScore","Toxicity","Allergenicity","Cell_Type"
     ])
 
-    df = df.sort_values("FinalScore", ascending=False).head(top_n)
-
-    st.subheader("✅ Final Integrated Epitope Ranking")
-    st.dataframe(df)
+    df = df.sort_values("FinalScore", ascending=False)
 
     # =========================
-    # ========== PLOTS ==========
+    # Clustering
     # =========================
+    Z = StandardScaler().fit_transform(df[["ML_Score","Conservancy_%","Robustness","Antigenicity","FinalScore"]])
+    k = min(5, len(df))
+    kmeans = KMeans(n_clusters=k, n_init=10)
+    df["Cluster"] = kmeans.fit_predict(Z)
 
-    st.subheader("📊 Advanced Analysis Dashboard")
+    # =========================
+    # Pareto front
+    # =========================
+    pareto = pareto_front(df, ["ML_Score","Conservancy_%","Robustness","FinalScore"])
 
-    fig = plt.figure(figsize=(14,10))
-    gs = fig.add_gridspec(4, 2)
+    # =========================
+    # Final selection
+    # =========================
+    df_final = df.head(top_n)
 
-    # 1. Score distribution
-    ax1 = fig.add_subplot(gs[0,0])
-    sns.histplot(df["FinalScore"], kde=True, ax=ax1)
-    ax1.set_title("Final Score Distribution")
+    st.subheader("🏆 Final Optimized Epitope Set")
+    st.dataframe(df_final)
 
-    # 2. Conservancy
-    ax2 = fig.add_subplot(gs[0,1])
-    sns.histplot(df["Conservancy_%"], kde=True, ax=ax2)
-    ax2.set_title("Conservancy Distribution")
+    st.subheader("🎯 Pareto-Optimal Epitope Set")
+    st.dataframe(pareto.head(20))
 
-    # 3. Cell type
-    ax3 = fig.add_subplot(gs[1,0])
-    df["Cell_Type"].value_counts().plot(kind="bar", ax=ax3)
-    ax3.set_title("Cell Type Distribution")
+    # =========================
+    # Vaccine construct
+    # =========================
+    linker = "GPGPG"
+    construct = linker.join(df_final["Peptide"].tolist())
 
-    # 4. Toxicity
-    ax4 = fig.add_subplot(gs[1,1])
-    df["Toxicity"].value_counts().plot(kind="bar", ax=ax4)
-    ax4.set_title("Toxicity Risk")
+    st.subheader("🧩 Auto-Designed Vaccine Construct")
+    st.code(construct)
+    st.write("Construct length:", len(construct))
 
-    # 5. Hotspot map
-    ax5 = fig.add_subplot(gs[2,:])
-    ax5.scatter(df["Start"], df["FinalScore"], s=80, c=df["FinalScore"], cmap="viridis")
-    ax5.set_title("Epitope Hotspot Landscape")
-    ax5.set_xlabel("Protein Position")
-    ax5.set_ylabel("Final Score")
+    # =========================
+    # Plots
+    # =========================
+    st.subheader("📊 Intelligence Dashboard")
 
-    # 6. Genome-browser style tracks
-    ax6 = fig.add_subplot(gs[3,:])
-    ax6.bar(df["Start"], df["Conservancy_%"], width=df["Length"])
-    ax6.set_title("Genome-browser Style Conservancy Track")
-    ax6.set_xlabel("Protein Position")
-    ax6.set_ylabel("Conservancy %")
+    fig, axes = plt.subplots(2,2, figsize=(12,10))
+
+    sns.scatterplot(data=df, x="Conservancy_%", y="FinalScore", hue="Cluster", ax=axes[0,0])
+    axes[0,0].set_title("Clustering in Conservancy vs Score")
+
+    sns.scatterplot(data=df, x="Robustness", y="FinalScore", ax=axes[0,1])
+    axes[0,1].set_title("Robustness vs Score")
+
+    sns.histplot(df["FinalScore"], kde=True, ax=axes[1,0])
+    axes[1,0].set_title("Final Score Distribution")
+
+    sns.scatterplot(data=df, x="Start", y="FinalScore", size="Length", ax=axes[1,1])
+    axes[1,1].set_title("Epitope Hotspot Landscape")
 
     plt.tight_layout()
     st.pyplot(fig)
@@ -229,5 +263,5 @@ if st.button("🔍 Predict Epitopes"):
     # =========================
     # Download
     # =========================
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+    csv = df_final.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download Final Epitope Set", csv, "final_epitopes.csv", "text/csv")
