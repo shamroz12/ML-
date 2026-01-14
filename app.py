@@ -277,7 +277,6 @@ def show_structure_3d_advanced(pdb_text, df):
     # Render
     # -----------------------------
     components.html(view._make_html(), height=750, scrolling=False)
-)
 
 # =========================
 # Publication-grade construct plot
