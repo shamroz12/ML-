@@ -1,152 +1,120 @@
 import plotly.express as px
 import plotly.graph_objects as go
-import numpy as np
-from sklearn.cluster import KMeans
 
-# =========================
-# CONFIG
-# =========================
-df = df_hits.copy()   # or df if you want all peptides
-score_col = "Score" if "Score" in df.columns else "FinalScore"
+st.markdown("## 📊 Advanced Interactive Analysis Dashboard")
 
-protein_length = int(df["Start_Position"].max() + df["Length"].max())
+df = df_hits.copy()
 
-st.markdown("## 🧬 Advanced Visual Analytics Dashboard")
+# ===============================
+# 1️⃣ Epitope Length Distribution
+# ===============================
+st.subheader("📏 Epitope Length Distribution")
 
-# ======================================================
-# 1️⃣ MULTI-TRACK GENOME-BROWSER STYLE EPITOPE MAP
-# ======================================================
-st.subheader("🧬 Multi-track Epitope Landscape Map")
+len_df = df["Length"].value_counts().sort_index().reset_index()
+len_df.columns = ["Length", "Count"]
 
-fig = go.Figure()
+fig1 = px.bar(
+    len_df, x="Length", y="Count",
+    color="Count",
+    color_continuous_scale="viridis",
+    title="Distribution of Epitope Lengths"
+)
+fig1.update_layout(template="plotly_white")
+st.plotly_chart(fig1, use_container_width=True)
 
-# Protein backbone
-fig.add_trace(go.Scatter(
-    x=[1, protein_length],
-    y=[0, 0],
-    mode="lines",
-    line=dict(width=10, color="black"),
-    name="Protein"
-))
+# ===============================
+# 2️⃣ Cell Type Distribution
+# ===============================
+st.subheader("🧬 B-cell vs T-cell Distribution")
 
-# Epitopes
-for _, r in df.iterrows():
-    fig.add_trace(go.Scatter(
-        x=[r.Start_Position, r.Start_Position + r.Length],
-        y=[1, 1],
-        mode="lines",
-        line=dict(width=12),
-        hovertext=f"""
-Peptide: {r.Peptide}
-Score: {r[score_col]:.3f}
-Cell: {r.Cell_Type}
-Conservancy: {r['Conservancy_%']:.1f}%
-"""
-    ))
+cell_df = df["Cell_Type"].value_counts().reset_index()
+cell_df.columns = ["Cell_Type", "Count"]
 
-fig.update_layout(
-    title="Epitope Mapping Along Protein Sequence",
+fig2 = px.pie(
+    cell_df,
+    names="Cell_Type",
+    values="Count",
+    hole=0.45,
+    title="B-cell vs T-cell Epitope Proportion"
+)
+st.plotly_chart(fig2, use_container_width=True)
+
+# ===============================
+# 3️⃣ Toxicity Risk Profile
+# ===============================
+st.subheader("☣️ Toxicity Risk Profile")
+
+tox_df = df["Toxicity_Risk"].value_counts().reset_index()
+tox_df.columns = ["Risk", "Count"]
+
+fig3 = px.bar(
+    tox_df, x="Risk", y="Count",
+    color="Risk",
+    color_discrete_map={"Low":"green","High":"red"},
+    title="Toxicity Risk Distribution"
+)
+fig3.update_layout(template="plotly_white")
+st.plotly_chart(fig3, use_container_width=True)
+
+# ===============================
+# 4️⃣ Conservancy Distribution
+# ===============================
+st.subheader("🧪 Conservancy Percentage Distribution")
+
+fig4 = px.histogram(
+    df,
+    x="Conservancy_%",
+    nbins=10,
+    title="Conservancy Score Distribution",
+    color_discrete_sequence=["#636EFA"]
+)
+fig4.update_layout(template="plotly_white")
+st.plotly_chart(fig4, use_container_width=True)
+
+# ===============================
+# 5️⃣ Epitope Hotspot Landscape
+# ===============================
+st.subheader("📍 Epitope Hotspot Map Along Protein")
+
+fig5 = px.scatter(
+    df,
+    x="Start_Position",
+    y="Score",
+    size="Length",
+    color="Score",
+    hover_data=["Peptide","Length","Conservancy_%"],
+    color_continuous_scale="Turbo",
+    title="Epitope Hotspot Landscape Across Protein"
+)
+
+fig5.update_layout(
     xaxis_title="Protein Position",
-    yaxis=dict(visible=False),
-    height=400,
+    yaxis_title="Epitope Score",
     template="plotly_white"
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig5, use_container_width=True)
 
-# ======================================================
-# 2️⃣ COVERAGE MAP (PER-RESIDUE EPITOPE DENSITY)
-# ======================================================
-st.subheader("📍 Epitope Coverage Map (Per-Residue Density)")
+# ===============================
+# 6️⃣ Screening Funnel View
+# ===============================
+st.subheader("🧹 Screening Funnel Overview")
 
-coverage = np.zeros(protein_length)
-
-for _, r in df.iterrows():
-    s = int(r.Start_Position) - 1
-    e = int(r.Start_Position + r.Length) - 1
-    coverage[s:e] += 1
-
-cov_df = pd.DataFrame({
-    "Position": np.arange(1, protein_length + 1),
-    "Coverage": coverage
+funnel_df = pd.DataFrame({
+    "Stage": ["Predicted", "After Toxicity", "After Allergenicity", "Final Selected"],
+    "Count": [
+        len(df_hits),
+        len(df_hits[df_hits["Toxicity_Risk"]=="Low"]),
+        len(df_hits[(df_hits["Toxicity_Risk"]=="Low") & (df_hits["Allergenicity_Risk"]=="Low")]),
+        len(df_hits)
+    ]
 })
 
-fig_cov = px.line(
-    cov_df, x="Position", y="Coverage",
-    title="Epitope Coverage Density Along Protein"
-)
-fig_cov.update_layout(template="plotly_white")
-
-st.plotly_chart(fig_cov, use_container_width=True)
-
-# ======================================================
-# 3️⃣ EPITOPE CLUSTERING HEATMAP
-# ======================================================
-st.subheader("🧠 Epitope Clustering Heatmap")
-
-X = df[["Start_Position", "Length", score_col, "Conservancy_%"]].values
-
-k = min(4, len(df))
-kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-clusters = kmeans.fit_predict(X)
-
-df["Cluster"] = clusters
-
-heat_df = df.sort_values("Cluster")[["Start_Position", "Length", score_col, "Conservancy_%"]]
-
-fig_heat = px.imshow(
-    heat_df.T,
-    aspect="auto",
-    color_continuous_scale="Viridis",
-    title="Epitope Feature Clustering Heatmap"
+fig6 = px.funnel(
+    funnel_df,
+    x="Count",
+    y="Stage",
+    title="Epitope Screening Funnel"
 )
 
-st.plotly_chart(fig_heat, use_container_width=True)
-
-# ======================================================
-# 4️⃣ MODEL CONFIDENCE VIOLIN PLOT
-# ======================================================
-st.subheader("🎻 Model Confidence Distribution")
-
-fig_violin = px.violin(
-    df,
-    y=score_col,
-    x="Cell_Type",
-    box=True,
-    points="all",
-    color="Cell_Type",
-    title="Model Confidence Distribution by Epitope Type"
-)
-
-fig_violin.update_layout(template="plotly_white")
-
-st.plotly_chart(fig_violin, use_container_width=True)
-
-# ======================================================
-# 5️⃣ SHAP EXPLAINABILITY (OPTIONAL, SAFE)
-# ======================================================
-st.subheader("🧠 Model Explainability (SHAP Summary)")
-
-try:
-    import shap
-
-    # Use a small subset for speed
-    X_shap = X[: min(200, len(X))]
-
-    explainer = shap.Explainer(model)
-    shap_values = explainer(X_shap)
-
-    shap_df = pd.DataFrame(np.abs(shap_values.values).mean(axis=0)).T
-
-    fig_shap = px.bar(
-        shap_df.T,
-        title="Mean |SHAP| Feature Importance",
-        labels={"index":"Feature Index","value":"Importance"}
-    )
-    fig_shap.update_layout(template="plotly_white")
-
-    st.plotly_chart(fig_shap, use_container_width=True)
-
-except Exception as e:
-    st.info("SHAP not available in this environment. (This is optional and does not affect main results.)")
-
+st.plotly_chart(fig6, use_container_width=True)
