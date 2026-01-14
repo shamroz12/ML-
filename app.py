@@ -310,8 +310,9 @@ fig_funnel = px.funnel(
 )
 
 st.plotly_chart(fig_funnel, use_container_width=True)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+       csv = df.to_csv(index=False).encode("utf-8")
+st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+
 
 
 
