@@ -1,3 +1,5 @@
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -185,30 +187,154 @@ if st.button("🔍 Predict Epitopes"):
     st.subheader("✅ Final Integrated Epitope Ranking")
     st.dataframe(df)
 
-    # =========================
-    # PLOTS (SAFE)
-    # =========================
-    st.subheader("📊 Epitope Length Distribution")
-    st.bar_chart(df["Length"].value_counts().sort_index())
+# =========================
+# ADVANCED VISUAL DASHBOARD
+# =========================
+st.subheader("📊 Interactive Analysis Dashboard")
 
-    st.subheader("📊 Cell Type Distribution")
-    st.bar_chart(df["Cell_Type"].value_counts())
+# -------- Layout: 2 columns --------
+col1, col2 = st.columns(2)
 
-    st.subheader("📊 Toxicity Risk")
-    st.bar_chart(df["Toxicity"].value_counts())
+# =========================
+# 1) Length distribution
+# =========================
+with col1:
+    st.markdown("### 📏 Epitope Length Distribution")
+    len_df = df["Length"].value_counts().sort_index().reset_index()
+    len_df.columns = ["Length", "Count"]
 
-    st.subheader("📊 Conservancy Distribution")
-    bins = np.linspace(0,100,11)
-    hist, edges = np.histogram(df["Conservancy_%"], bins=bins)
-    cons_df = pd.DataFrame({"Conservancy": edges[:-1], "Count": hist}).set_index("Conservancy")
-    st.bar_chart(cons_df)
+    fig_len = px.bar(
+        len_df, x="Length", y="Count",
+        color="Count",
+        color_continuous_scale="viridis",
+        title="Distribution of Epitope Lengths"
+    )
+    fig_len.update_layout(template="plotly_white")
+    st.plotly_chart(fig_len, use_container_width=True)
 
-    st.subheader("📍 Epitope Hotspot Map")
-    hotspot = pd.DataFrame({
-        "Position": df["Start"],
-        "Score": df["FinalScore"]
-    }).set_index("Position")
-    st.line_chart(hotspot)
+# =========================
+# 2) Cell type distribution
+# =========================
+with col2:
+    st.markdown("### 🧬 Cell Type Distribution")
+    cell_df = df["Cell_Type"].value_counts().reset_index()
+    cell_df.columns = ["Cell_Type", "Count"]
 
+    fig_cell = px.pie(
+        cell_df,
+        names="Cell_Type",
+        values="Count",
+        hole=0.4,
+        title="B-cell vs T-cell vs Both"
+    )
+    st.plotly_chart(fig_cell, use_container_width=True)
+
+# -------- Row 2 --------
+col3, col4 = st.columns(2)
+
+# =========================
+# 3) Toxicity profile
+# =========================
+with col3:
+    st.markdown("### ☣️ Toxicity Risk Profile")
+    tox_df = df["Toxicity"].value_counts().reset_index()
+    tox_df.columns = ["Risk", "Count"]
+
+    fig_tox = px.bar(
+        tox_df, x="Risk", y="Count",
+        color="Risk",
+        color_discrete_map={"Low":"green","High":"red"},
+        title="Toxicity Risk Distribution"
+    )
+    fig_tox.update_layout(template="plotly_white")
+    st.plotly_chart(fig_tox, use_container_width=True)
+
+# =========================
+# 4) Conservancy distribution
+# =========================
+with col4:
+    st.markdown("### 🧪 Conservancy Distribution")
+    fig_cons = px.histogram(
+        df, x="Conservancy_%",
+        nbins=10,
+        title="Conservancy Percentage Distribution",
+        color_discrete_sequence=["#636EFA"]
+    )
+    fig_cons.update_layout(template="plotly_white")
+    st.plotly_chart(fig_cons, use_container_width=True)
+
+# =========================
+# 5) Epitope hotspot landscape
+# =========================
+st.markdown("### 📍 Epitope Hotspot Landscape Along Protein")
+
+fig_hot = px.scatter(
+    df,
+    x="Start",
+    y="FinalScore",
+    size="Length",
+    color="FinalScore",
+    hover_data=["Peptide","Length","Conservancy_%","Cell_Type"],
+    color_continuous_scale="Turbo",
+    title="Epitope Hotspot Landscape Across Protein"
+)
+
+fig_hot.update_layout(
+    xaxis_title="Protein Position",
+    yaxis_title="Final Epitope Score",
+    template="plotly_white"
+)
+
+st.plotly_chart(fig_hot, use_container_width=True)
+
+# =========================
+# 6) Screening funnel
+# =========================
+st.markdown("### 🧹 Screening Funnel Overview")
+
+funnel_df = pd.DataFrame({
+    "Stage": ["All Predicted", "Non-Toxic", "Non-Allergenic", "Final Selected"],
+    "Count": [
+        len(rows),
+        len(df[df["Toxicity"]=="Low"]),
+        len(df[(df["Toxicity"]=="Low") & (df["Allergenicity"]=="Low")]),
+        len(df)
+    ]
+})
+
+fig_funnel = px.funnel(
+    funnel_df,
+    x="Count",
+    y="Stage",
+    title="Epitope Screening Funnel"
+)
+
+st.plotly_chart(fig_funnel, use_container_width=True)
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Download Results", csv, "final_epitopes.csv", "text/csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
