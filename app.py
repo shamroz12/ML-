@@ -195,6 +195,78 @@ def draw_vaccine_construct_figure(df, linker="GPGPG", save_path=None):
     plt.tight_layout()
     if save_path: plt.savefig(save_path, dpi=300, bbox_inches="tight")
     return fig
+# =========================
+# Construct optimization
+# =========================
+
+def junction_penalty(seq):
+    # penalize hydrophobic-hydrophobic junctions
+    penalty = 0
+    for i in range(len(seq)-1):
+        if hydro.get(seq[i],0) > 1 and hydro.get(seq[i+1],0) > 1:
+            penalty += 1
+    return penalty / len(seq)
+
+def hydrophobic_cluster_penalty(seq):
+    # penalize long hydrophobic stretches
+    penalty = 0
+    run = 0
+    for a in seq:
+        if hydro.get(a,0) > 1:
+            run += 1
+            if run >= 4:
+                penalty += run
+        else:
+            run = 0
+    return penalty / len(seq)
+
+def repeat_penalty(seq):
+    # penalize AAA, GGG etc
+    penalty = 0
+    for i in range(len(seq)-2):
+        if seq[i] == seq[i+1] == seq[i+2]:
+            penalty += 1
+    return penalty / len(seq)
+
+def construct_fitness(epitopes, df, linker="GPGPG"):
+    seq = linker.join(epitopes)
+
+    mean_score = df.set_index("Peptide").loc[epitopes]["FinalScore"].mean()
+
+    jpen = junction_penalty(seq)
+    hpen = hydrophobic_cluster_penalty(seq)
+    rpen = repeat_penalty(seq)
+
+    fitness = (
+        0.4 * mean_score
+        - 0.3 * jpen
+        - 0.2 * hpen
+        - 0.1 * rpen
+    )
+
+    return fitness, seq, jpen, hpen, rpen
+
+def optimize_construct(df, linker="GPGPG", n_iter=500):
+
+    epitopes = df["Peptide"].tolist()
+    best_order = epitopes.copy()
+    best_fitness, best_seq, best_j, best_h, best_r = construct_fitness(best_order, df, linker)
+
+    for _ in range(n_iter):
+        trial = best_order.copy()
+        np.random.shuffle(trial)
+
+        fit, seq, j, h, r = construct_fitness(trial, df, linker)
+
+        if fit > best_fitness:
+            best_fitness = fit
+            best_order = trial
+            best_seq = seq
+            best_j = j
+            best_h = h
+            best_r = r
+
+    return best_order, best_seq, best_fitness, best_j, best_h, best_r
 
 # =========================
 # UI
@@ -251,11 +323,43 @@ with tabs[1]:
 # ---------------- TAB 3 ----------------
 with tabs[2]:
     if "df" in st.session_state:
-        df=st.session_state["df"]
-        construct="GPGPG".join(df["Peptide"])
-        st.code(construct)
-        fig=draw_vaccine_construct_figure(df)
-        st.pyplot(fig)
+        df = st.session_state["df"]
+
+        st.subheader("🧩 Vaccine Construct Designer & Optimizer")
+
+        linker = "GPGPG"
+
+        st.markdown("### 🔹 Baseline Construct (Ranked Order)")
+        baseline_order = df["Peptide"].tolist()
+        baseline_seq = linker.join(baseline_order)
+
+        st.code(baseline_seq)
+        st.write("Length:", len(baseline_seq), "aa")
+
+        if st.button("🚀 Optimize Construct Order"):
+
+            with st.spinner("Optimizing epitope order..."):
+                best_order, best_seq, best_fit, jpen, hpen, rpen = optimize_construct(df, linker, n_iter=800)
+
+            st.success("Optimization complete!")
+
+            st.markdown("### ✅ Optimized Construct")
+            st.code(best_seq)
+            st.write("Length:", len(best_seq), "aa")
+
+            st.markdown("### 📊 Optimization Metrics")
+            st.write("Fitness score:", round(best_fit, 4))
+            st.write("Junction penalty:", round(jpen, 4))
+            st.write("Hydrophobic clustering penalty:", round(hpen, 4))
+            st.write("Repeat penalty:", round(rpen, 4))
+
+            opt_df = df.set_index("Peptide").loc[best_order].reset_index()
+
+            st.markdown("### 🖼️ Optimized Construct Architecture")
+            fig = draw_vaccine_construct_figure(opt_df, linker=linker)
+            st.pyplot(fig)
+
+            st.session_state["optimized_construct"] = best_seq
 
 # ---------------- TAB 4 ----------------
 with tabs[3]:
