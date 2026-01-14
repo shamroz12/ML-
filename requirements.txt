@@ -2,11 +2,10 @@ streamlit
 numpy
 pandas
 scikit-learn
-xgboost
-joblib
-plotly
 matplotlib
 seaborn
+joblib
+xgboost
 requests
 
 
