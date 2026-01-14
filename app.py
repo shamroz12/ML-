@@ -424,7 +424,7 @@ with tabs[4]:
     pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
     if "df" in st.session_state and pdb_file:
         pdb_text=pdb_file.read().decode("utf-8")
-        show_structure_3d(pdb_text, st.session_state["df"])
+       show_structure_3d_advanced(pdb_text, st.session_state["df"])
 
 # =========================
 # TAB 6 — EXPORT
