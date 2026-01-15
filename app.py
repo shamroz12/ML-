@@ -345,10 +345,16 @@ def show_structure_3d(pdb_text, df):
 def plot_immunogenic_landscape(df, metric_col):
     import numpy as np
 
+    # SAFETY: clean column names again
+    df = df.copy()
+    df.columns = df.columns.str.strip()
+
+    if metric_col not in df.columns:
+        raise ValueError(f"Column '{metric_col}' not found. Available columns: {list(df.columns)}")
+
     x = df["Start"].values
     y = df[metric_col].values
 
-    # Sort by position
     order = np.argsort(x)
     x = x[order]
     y = y[order]
@@ -359,32 +365,28 @@ def plot_immunogenic_landscape(df, metric_col):
 
     fig, ax = plt.subplots(figsize=(9, 3.8), dpi=200)
 
-    # Scatter
     sc = ax.scatter(
         x, y,
         c=y,
-        cmap="viridis",
+        cmap="turbo",   # better colormap
         s=70,
         edgecolors="black",
         linewidths=0.3,
         alpha=0.9
     )
 
-    # Smoothed trend
-    ax.plot(x, y_smooth, color="red", linewidth=2, label="Smoothed trend")
+    ax.plot(x, y_smooth, color="black", linewidth=2, label="Smoothed trend")
 
-    # Best epitope
     best_idx = np.argmax(y)
     ax.scatter(
         x[best_idx], y[best_idx],
-        s=200,
+        s=220,
         color="gold",
         edgecolors="black",
         zorder=5,
         label="Best epitope"
     )
 
-    # Mean line
     mean_val = np.mean(y)
     ax.axhline(mean_val, linestyle="--", color="gray", linewidth=1, label="Mean")
 
@@ -460,6 +462,7 @@ with tabs[0]:
             df = pd.DataFrame(
                 rows,
                 columns=["Peptide","Start","Length","ML","Conservancy_%","FinalScore"]
+                df.columns = df.columns.str.strip()
             )
 
             df = df.sort_values("FinalScore", ascending=False).head(top_n)
@@ -594,7 +597,7 @@ with tabs[2]:
         st.download_button("Download TXT", construct, "vaccine.txt")
 
 # =========================
-# LANDSCAPE (ADVANCED)
+# LANDSCAPE (BULLETPROOF)
 # =========================
 with tabs[3]:
     if "df" in st.session_state:
@@ -602,7 +605,9 @@ with tabs[3]:
 
         st.subheader("📊 Immunogenic Landscape Analysis")
 
-        # SAFE mapping (no KeyError possible)
+        # Always show columns (debug)
+        st.caption(f"Available columns: {list(df.columns)}")
+
         metric_map = {
             "Final Immunogenic Score": "FinalScore",
             "Conservancy": "Conservancy_%",
@@ -616,8 +621,12 @@ with tabs[3]:
 
         metric_col = metric_map[label]
 
-        fig = plot_immunogenic_landscape(df, metric_col)
-        st.pyplot(fig, use_container_width=False)
+        try:
+            fig = plot_immunogenic_landscape(df, metric_col)
+            st.pyplot(fig, use_container_width=False)
+        except Exception as e:
+            st.error("❌ Plotting failed")
+            st.code(str(e))
 
         st.info("🔍 This plot shows immunogenic hotspots, clustering, and coverage across the protein.")
 
