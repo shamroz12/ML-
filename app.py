@@ -594,16 +594,95 @@ with tabs[0]:
 # =========================
 with tabs[1]:
     st.header("🧠 Model Explainability (SHAP)")
-    if "df" in st.session_state:
-        X = st.session_state["X"]
-        explainer = shap.TreeExplainer(model)
-        shap_vals = explainer.shap_values(X.iloc[:20])
 
-        fig, _ = plt.subplots(figsize=(8,5), dpi=200)
-        shap.summary_plot(shap_vals, X.iloc[:20], show=False)
-        st.pyplot(fig, use_container_width=False)
+    if "df" not in st.session_state or "X" not in st.session_state:
+        st.info("Run the pipeline first.")
     else:
-        st.info("Run pipeline first.")
+        df = st.session_state["df"]
+        X = st.session_state["X"]
+
+        st.markdown("### 🔬 Global & Local Explainability")
+
+        # Build explainer
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X)
+
+        # =========================
+        # GLOBAL EXPLANATION
+        # =========================
+        st.subheader("🌍 Global Feature Importance")
+
+        fig1, ax1 = plt.subplots(figsize=(10, 6))
+        shap.summary_plot(shap_values, X, plot_type="bar", show=False)
+        st.pyplot(fig1)
+
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        shap.summary_plot(shap_values, X, show=False)
+        st.pyplot(fig2)
+
+        # =========================
+        # LOCAL EXPLANATION
+        # =========================
+        st.subheader("🧬 Explain Individual Peptide")
+
+        idx = st.slider("Select peptide index", 0, len(df)-1, 0)
+
+        st.write("Selected peptide:", df.iloc[idx]["Peptide"])
+
+        # Waterfall plot
+        st.markdown("### 💧 Waterfall explanation")
+
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        shap.plots._waterfall.waterfall_legacy(
+            explainer.expected_value,
+            shap_values[idx],
+            X.iloc[idx],
+            show=False
+        )
+        st.pyplot(fig3)
+
+        # =========================
+        # DECISION PLOT
+        # =========================
+        st.subheader("🧭 Decision Path")
+
+        fig4, ax4 = plt.subplots(figsize=(10, 6))
+        shap.decision_plot(
+            explainer.expected_value,
+            shap_values[idx],
+            X.iloc[idx],
+            show=False
+        )
+        st.pyplot(fig4)
+
+        # =========================
+        # DEPENDENCE PLOT
+        # =========================
+        st.subheader("📈 Feature Interaction Explorer")
+
+        feat = st.selectbox("Select feature", X.columns.tolist())
+
+        fig5, ax5 = plt.subplots(figsize=(8, 6))
+        shap.dependence_plot(
+            feat,
+            shap_values,
+            X,
+            show=False
+        )
+        st.pyplot(fig5)
+
+        # =========================
+        # TOP FEATURES TABLE
+        # =========================
+        st.subheader("🏆 Most Influential Features")
+
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
+        imp = pd.DataFrame({
+            "Feature": X.columns,
+            "Mean |SHAP|": mean_abs_shap
+        }).sort_values("Mean |SHAP|", ascending=False)
+
+        st.dataframe(imp)
 
 # =========================
 # TAB 3 — VACCINE
