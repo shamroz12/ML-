@@ -12,6 +12,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 import shap
 import py3Dmol
 import streamlit.components.v1 as components
+from rdkit import Chem
+from rdkit.Chem import Draw, Descriptors
+from PIL import Image
 
 # =========================
 # Page config
@@ -214,13 +217,34 @@ def draw_vaccine_construct_figure(df, linker="GPGPG", signal="", adjuvant=""):
     ax.set_xlim(0,x); ax.set_ylim(0,1.2); ax.set_yticks([])
     ax.set_title("Multi-Epitope Vaccine Construct Architecture")
     return fig
+    def peptide_to_mol(seq):
+    try:
+        mol = Chem.MolFromSequence(seq)
+        return mol
+    except:
+        return None
+
+def peptide_physchem(seq):
+    mw, hyd, aromatic = physchem(seq)
+    charge = seq.count("K") + seq.count("R") - seq.count("D") - seq.count("E")
+    return {
+        "Length": len(seq),
+        "Molecular Weight": mw,
+        "Hydrophobicity": hyd,
+        "Aromatic Fraction": aromatic,
+        "Net Charge": charge
+    }
+
+def aa_composition_dict(seq):
+    L = len(seq)
+    return {aa: seq.count(aa)/L for aa in amino_acids}
 
 # =========================
 # UI
 # =========================
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
 
-tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Export","Report"])
+tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Chemistry","Export","Report"])
 
 # =========================
 # TAB 1 — PIPELINE
@@ -317,12 +341,57 @@ with tabs[4]:
         show_structure_3d_advanced(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
 # =========================
-# TAB 6 — EXPORT
+# TAB 6 — PEPTIDE CHEMISTRY
 # =========================
 with tabs[5]:
-    if "df" in st.session_state:
-        df=st.session_state["df"]
-        st.download_button("Download CSV", df.to_csv(index=False), "epitopes.csv")
+    st.subheader("🧪 Peptide Chemistry & Structure Explorer")
+
+    if "df" not in st.session_state:
+        st.warning("Run pipeline first.")
+    else:
+        df = st.session_state["df"]
+
+        pep = st.selectbox("Select peptide", df["Peptide"].tolist())
+
+        st.markdown("## 🧬 Peptide Sequence")
+        st.code(pep)
+
+        # ---------- Physicochemical profile ----------
+        props = peptide_physchem(pep)
+        st.markdown("## 📊 Physicochemical Properties")
+        st.json(props)
+
+        # ---------- Amino acid composition ----------
+        comp = aa_composition_dict(pep)
+        comp_df = pd.DataFrame({"AA": list(comp.keys()), "Fraction": list(comp.values())})
+
+        st.markdown("## 🧱 Amino Acid Composition")
+        fig1, ax1 = plt.subplots(figsize=(8,4))
+        ax1.bar(comp_df["AA"], comp_df["Fraction"])
+        ax1.set_ylabel("Fraction")
+        ax1.set_title("Amino Acid Composition")
+        st.pyplot(fig1)
+
+        # ---------- 2D Chemical Structure ----------
+        st.markdown("## 🧪 2D Chemical Structure")
+
+        mol = peptide_to_mol(pep)
+        if mol is not None:
+            img = Draw.MolToImage(mol, size=(500,300))
+            st.image(img)
+
+            # Save & download
+            img.save("peptide_structure.png")
+
+            with open("peptide_structure.png", "rb") as f:
+                st.download_button(
+                    "📥 Download Structure Image",
+                    f,
+                    file_name=f"{pep}_structure.png",
+                    mime="image/png"
+                )
+        else:
+            st.error("Could not generate structure.")
 
 # =========================
 # TAB 7 — REPORT
