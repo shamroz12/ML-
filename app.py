@@ -238,56 +238,57 @@ def construct_quality_metrics(peptides):
 # =========================
 def show_structure_3d(pdb_text, df):
 
-    # ---------------- UI CONTROLS ----------------
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    st.subheader("🧬 Advanced 3D Structure Viewer")
 
+    # ---------------- UI ----------------
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere"])
+        style = st.selectbox("Style", ["cartoon", "surface", "stick"])
     with c2:
         color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
     with c3:
         focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
     with c4:
         auto_rotate = st.checkbox("Auto rotate", value=False)
+
+    c5, c6, c7 = st.columns(3)
     with c5:
-        rot_speed = st.slider("Rotation speed", 0.1, 1.0, 0.4)
+        opacity = st.slider("Transparency", 0.3, 1.0, 1.0)
     with c6:
-        opacity = st.slider("Transparency", 0.2, 1.0, 0.95)
+        rot_speed = st.slider("Rotation speed", 0.1, 1.0, 0.4)
+    with c7:
+        bg = st.selectbox("Background", ["white", "black"])
 
     z1, z2, z3, z4 = st.columns(4)
     zoom_in = z1.button("🔍 Zoom in")
     zoom_out = z2.button("🔎 Zoom out")
-    reset_view = z3.button("🔁 Reset zoom")
+    reset_view = z3.button("🔁 Reset view")
     center_view = z4.button("🎯 Center")
 
-    # ---------------- CAMERA STATE ----------------
+    # ---------------- ZOOM STATE ----------------
     if "zoom_factor" not in st.session_state:
         st.session_state.zoom_factor = 1.0
 
     if zoom_in:
-        st.session_state.zoom_factor *= 1.15
+        st.session_state.zoom_factor *= 1.2
     if zoom_out:
-        st.session_state.zoom_factor /= 1.15
+        st.session_state.zoom_factor /= 1.2
     if reset_view:
         st.session_state.zoom_factor = 1.0
 
-    # ---------------- CREATE VIEW ----------------
+    # ---------------- VIEWER ----------------
     view = py3Dmol.view(width=1400, height=900)
     view.addModel(pdb_text, "pdb")
 
-    view.setBackgroundColor("white")
-    view.setViewStyle({"style": "outline", "width": 0.05})
-    view.setAmbientOcclusion(True)
+    view.setBackgroundColor(bg)
 
     # ---------------- BASE STYLE ----------------
-    if style == "cartoon":
-        view.setStyle({}, {"cartoon": {"color": "lightgray", "opacity": opacity}})
-    elif style == "surface":
+    view.setStyle({}, {"cartoon": {"color": "lightgray", "opacity": opacity}})
+
+    if style == "surface":
         view.setStyle({}, {"surface": {"opacity": opacity, "color": "lightgray"}})
     elif style == "stick":
-        view.setStyle({}, {"stick": {"radius": 0.25}})
-    else:
-        view.setStyle({}, {"sphere": {"scale": 0.35}})
+        view.setStyle({}, {"stick": {"radius": 0.3}})
 
     # ---------------- COLOR MAP ----------------
     scores = df["FinalScore"].values
@@ -296,40 +297,22 @@ def show_structure_3d(pdb_text, df):
     cmin, cmax = cons.min(), cons.max()
 
     def heat_color(t):
-        # Clamp
-        t = max(0.0, min(1.0, t))
-
-        # 12-step scientific spectral gradient
+        t = max(0, min(1, t))
         colors = [
-            (0, 0, 80),      # deep navy
-            (0, 0, 255),     # blue
-            (0, 128, 255),   # sky blue
-            (0, 255, 255),   # cyan
-            (0, 255, 128),   # aqua-green
-            (0, 255, 0),     # green
-            (128, 255, 0),   # yellow-green
-            (255, 255, 0),   # yellow
-            (255, 180, 0),   # orange
-            (255, 100, 0),   # deep orange
-            (255, 0, 0),     # red
-            (128, 0, 0)      # dark red
+            (0,0,128),(0,0,255),(0,128,255),(0,255,255),
+            (0,255,128),(0,255,0),(128,255,0),(255,255,0),
+            (255,180,0),(255,100,0),(255,0,0),(128,0,0)
         ]
-
         n = len(colors) - 1
         pos = t * n
         i = int(pos)
         f = pos - i
-
         if i >= n:
             return f"rgb{colors[-1]}"
-
-        c1 = colors[i]
-        c2 = colors[i + 1]
-
-        r = int(c1[0] + (c2[0] - c1[0]) * f)
-        g = int(c1[1] + (c2[1] - c1[1]) * f)
-        b = int(c1[2] + (c2[2] - c1[2]) * f)
-
+        c1, c2 = colors[i], colors[i+1]
+        r = int(c1[0] + (c2[0]-c1[0])*f)
+        g = int(c1[1] + (c2[1]-c1[1])*f)
+        b = int(c1[2] + (c2[2]-c1[2])*f)
         return f"rgb({r},{g},{b})"
 
     # ---------------- DRAW EPITOPES ----------------
@@ -351,27 +334,19 @@ def show_structure_3d(pdb_text, df):
         col = heat_color(t)
 
         view.addStyle(
-            {"resi": list(range(start, end + 1))},
-            {
-                "cartoon": {"color": col, "opacity": 1.0},
-                "stick": {"color": col, "radius": 0.35}
-            }
+            {"resi": list(range(start, end+1))},
+            {"cartoon": {"color": col, "opacity": 1.0}, "stick": {"color": col}}
         )
 
-        # Floating label
         mid = int((start + end) / 2)
         view.addLabel(
             f"{start}-{end}",
-            {
-                "fontSize": 14,
-                "backgroundColor": "white",
-                "fontColor": "black",
-                "inFront": True
-            },
+            {"fontSize": 12, "backgroundColor": "white", "fontColor": "black"},
             {"resi": mid}
         )
 
-    # ---------------- CAMERA ----------------
+    # ---------------- CAMERA FIX ----------------
+    view.zoomTo()                     # <<< CRITICAL
     view.zoom(st.session_state.zoom_factor)
 
     if center_view:
