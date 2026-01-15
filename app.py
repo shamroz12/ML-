@@ -582,6 +582,71 @@ tabs = st.tabs([
     "Report"
 ])
 
+import io
+import json
+import zipfile
+
+def make_fasta_from_df(df):
+    lines = []
+    for i, r in df.iterrows():
+        header = f">epitope_{i+1}_start_{r['Start']}_score_{r['FinalScore']:.3f}"
+        lines.append(header)
+        lines.append(r["Peptide"])
+    return "\n".join(lines)
+
+
+def make_summary_text(df):
+    txt = []
+    txt.append("Unified Epitope Intelligence Platform — Analysis Summary")
+    txt.append("=" * 60)
+    txt.append(f"Total epitopes: {len(df)}")
+    txt.append("")
+    txt.append("Top 10 epitopes:")
+    txt.append("-" * 40)
+
+    for i, r in df.head(10).iterrows():
+        txt.append(
+            f"{r['Peptide']} | Start={r['Start']} | Len={r['Length']} | "
+            f"ML={r['ML']:.3f} | Cons={r['Conservancy_%']:.1f} | Final={r['FinalScore']:.3f}"
+        )
+
+    return "\n".join(txt)
+
+
+def make_json_export(df):
+    return df.to_dict(orient="records")
+
+
+def make_excel_export(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Epitopes")
+    return output.getvalue()
+
+
+def make_zip_bundle(df, vaccine_construct=None):
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+
+        # CSV
+        z.writestr("epitopes.csv", df.to_csv(index=False))
+
+        # FASTA
+        z.writestr("epitopes.fasta", make_fasta_from_df(df))
+
+        # Summary
+        z.writestr("summary.txt", make_summary_text(df))
+
+        # JSON
+        z.writestr("epitopes.json", json.dumps(make_json_export(df), indent=2))
+
+        # Vaccine
+        if vaccine_construct:
+            z.writestr("vaccine_construct.fasta", f">Vaccine_Construct\n{vaccine_construct}")
+
+    mem.seek(0)
+    return mem.getvalue()
+
 # =========================
 # TAB 1 — PIPELINE (EXPERT MODE)
 # =========================
@@ -1068,14 +1133,49 @@ with tabs[5]:
             st.pyplot(plot_charge_distribution(pep), use_container_width=False)
 
 # =========================
-# TAB 7 — EXPORT
+# EXPORT
 # =========================
 with tabs[6]:
-    st.header("⬇️ Export Results")
-    if "df" in st.session_state:
+    st.header("📦 Export Results")
+
+    if "df" not in st.session_state:
+        st.info("Run the pipeline first.")
+    else:
         df = st.session_state["df"]
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv, "epitopes.csv")
+
+        # Try to get vaccine construct if exists
+        vaccine_construct = st.session_state.get("vaccine_construct", None)
+
+        st.subheader("📄 Individual Exports")
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        # CSV
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        c1.download_button("⬇️ CSV", csv_bytes, "epitopes.csv")
+
+        # FASTA
+        fasta_txt = make_fasta_from_df(df)
+        c2.download_button("⬇️ FASTA", fasta_txt, "epitopes.fasta")
+
+        # Excel
+        xlsx_bytes = make_excel_export(df)
+        c3.download_button("⬇️ Excel", xlsx_bytes, "epitopes.xlsx")
+
+        # JSON
+        json_txt = json.dumps(make_json_export(df), indent=2)
+        c4.download_button("⬇️ JSON", json_txt, "epitopes.json")
+
+        st.subheader("🧾 Analysis Report")
+
+        summary_txt = make_summary_text(df)
+        st.text_area("Preview", summary_txt, height=250)
+        st.download_button("⬇️ Download Summary", summary_txt, "summary.txt")
+
+        st.subheader("📦 Full Project Export (ZIP)")
+
+        zip_bytes = make_zip_bundle(df, vaccine_construct=vaccine_construct)
+        st.download_button("⬇️ Download FULL PROJECT ZIP", zip_bytes, "epitope_project_bundle.zip")
 
 # =========================
 # TAB 8 — REPORT
