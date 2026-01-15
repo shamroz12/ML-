@@ -1,11 +1,11 @@
 streamlit
+seaborn
 numpy
 pandas
-scikit-learn
 matplotlib
-seaborn
+scikit-learn
 joblib
-xgboost
 shap
 py3Dmol
 rdkit-pypi
+pillow
