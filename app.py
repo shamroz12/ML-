@@ -485,6 +485,7 @@ st.session_state["X"] = X
 st.success("Pipeline completed.")
 st.dataframe(df)
 
+
 # =========================
 # TAB 2 — SHAP
 # =========================
