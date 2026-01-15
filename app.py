@@ -108,6 +108,130 @@ def extract_features(seq):
     dp = dipeptide_composition(seq)
     mw, hydv, aromatic = physchem(seq)
     return aa + dp + [len(seq), mw, hydv, aromatic]
+# =========================
+# CHEMISTRY ENGINE
+# =========================
+
+aliphatic = set("AVLIM")
+
+def hydrophobic_moment(seq):
+    L = len(seq)
+    angles = [i*100*pi/180 for i in range(L)]
+    mx = sum(hydro[seq[i]] * cos(angles[i]) for i in range(L))
+    my = sum(hydro[seq[i]] * sin(angles[i]) for i in range(L))
+    return (mx*mx + my*my)**0.5 / L
+
+def gravy(seq):
+    return sum(hydro[a] for a in seq) / len(seq)
+
+def aliphatic_index(seq):
+    return 100 * sum(a in aliphatic for a in seq) / len(seq)
+
+def boman_index(seq):
+    return -sum(hydro[a] for a in seq) / len(seq)
+
+def aggregation_score(seq):
+    return max(0, gravy(seq)) + sum(a in "IVLFWY" for a in seq)/len(seq)
+
+def toxicity_score(seq):
+    return (sum(a in "KR" for a in seq)/len(seq)) * gravy(seq)**2
+
+def protease_stability(seq):
+    cuts = sum(a in "KR" for a in seq[1:-1])
+    return 1 / (1 + cuts)
+
+def solubility_score(seq):
+    return 1 / (1 + exp(gravy(seq)))
+
+def membrane_binding_prob(seq):
+    x = 0.8*hydrophobic_moment(seq) + 0.5*gravy(seq)
+    return 1 / (1 + exp(-3*x))
+
+def multi_objective_score(ml_score, seq):
+    return 0.6*ml_score + 0.4*solubility_score(seq)
+
+# =========================
+# CHEMISTRY PLOTS (HIGH DPI)
+# =========================
+
+def plot_helical_wheel(seq):
+    L = len(seq)
+    angles = [i*100*pi/180 for i in range(L)]
+
+    fig, ax = plt.subplots(figsize=(4,4), dpi=220)
+
+    xs = []; ys = []
+    for i,a in enumerate(angles):
+        x = cos(a); y = sin(a)
+        xs.append(x); ys.append(y)
+
+        aa = seq[i]
+        c = "red" if hydro[aa] > 1 else "blue" if hydro[aa] < -1 else "green"
+
+        ax.scatter(x, y, s=600, c=c, alpha=0.85, edgecolors="black", linewidths=0.5)
+        ax.text(x, y, aa, ha="center", va="center", color="white", fontweight="bold", fontsize=11)
+
+    mx = sum(hydro[seq[i]] * xs[i] for i in range(L))
+    my = sum(hydro[seq[i]] * ys[i] for i in range(L))
+    ax.arrow(0, 0, mx/5, my/5, head_width=0.08, linewidth=2, color="black")
+
+    circle = plt.Circle((0,0), 1, fill=False, linestyle="dashed", linewidth=1)
+    ax.add_artist(circle)
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Helical Wheel Projection", fontsize=12)
+
+    return fig
+
+def plot_hydropathy(seq):
+    vals = [hydro[a] for a in seq]
+
+    fig, ax = plt.subplots(figsize=(6,2.5), dpi=220)
+    ax.plot(range(1, len(seq)+1), vals, marker="o", linewidth=2)
+    ax.axhline(0, linestyle="--", linewidth=1)
+    ax.set_title("Hydropathy Plot", fontsize=11)
+    ax.set_xlabel("Position")
+    ax.set_ylabel("Hydrophobicity")
+
+    return fig
+# =========================
+# VACCINE DESIGN CONSTANTS
+# =========================
+
+SIGNAL_PEPTIDES = {
+    "None": "",
+    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
+    "IL2": "MYRMQLLSCIALSLALVTNS"
+}
+
+ADJUVANTS = {
+    "None": "",
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
+}
+
+PADRE = "AKFVAAWTLKAAA"
+
+# =========================
+# CONSTRUCT QUALITY METRICS
+# =========================
+
+def construct_quality_metrics(peptides):
+    if peptides is None or len(peptides) == 0:
+        return None
+
+    gravs = [gravy(p) for p in peptides]
+    sols  = [solubility_score(p) for p in peptides]
+    aggs  = [aggregation_score(p) for p in peptides]
+    mems  = [membrane_binding_prob(p) for p in peptides]
+
+    return {
+        "Avg GRAVY": float(np.mean(gravs)),
+        "Avg Solubility": float(np.mean(sols)),
+        "Avg Aggregation": float(np.mean(aggs)),
+        "Avg Membrane Binding": float(np.mean(mems)),
+        "Developability Score": float(np.mean(sols) - np.mean(aggs))
+    }
 
 # =========================
 # UI
@@ -199,8 +323,108 @@ with tabs[1]:
 # TAB 3 — VACCINE
 # =========================
 with tabs[2]:
-    st.header("💉 Multi-Epitope Vaccine Designer")
-    st.info("Vaccine design engine will appear here in STEP 3.")
+    st.header("💉 Intelligent Multi-Epitope Vaccine Designer")
+
+    if "df" not in st.session_state:
+        st.info("Run the pipeline first.")
+    else:
+        df = st.session_state["df"]
+
+        colA, colB, colC = st.columns(3)
+
+        with colA:
+            sig = st.selectbox("Signal peptide", list(SIGNAL_PEPTIDES.keys()))
+            adj = st.selectbox("Adjuvant", list(ADJUVANTS.keys()))
+            linker = st.selectbox("Linker", ["GPGPG", "AAY", "EAAAK"])
+
+        with colB:
+            n_epi = st.slider("Number of epitopes", 3, min(20, len(df)), min(8, len(df)))
+            cell_filter = st.selectbox("Epitope type", ["All"])  # placeholder for future
+
+        with colC:
+            ordering = st.selectbox("Order epitopes by", ["FinalScore", "Conservancy_%", "Start"])
+            add_padre = st.checkbox("Add PADRE helper epitope", value=True)
+            filter_bad = st.checkbox("Remove toxic / aggregating peptides", value=True)
+
+        work = df.copy()
+
+        if filter_bad:
+            work = work[
+                work["Peptide"].apply(
+                    lambda p: aggregation_score(p) < 1.5 and toxicity_score(p) < 1
+                )
+            ]
+
+        work = work.sort_values(ordering, ascending=False)
+
+        selected = work.head(n_epi)["Peptide"].tolist()
+
+        blocks = []
+        if sig != "None":
+            blocks.append(("Signal", SIGNAL_PEPTIDES[sig]))
+        if adj != "None":
+            blocks.append(("Adjuvant", ADJUVANTS[adj]))
+
+        for p in selected:
+            blocks.append(("Epitope", p))
+
+        if add_padre:
+            blocks.append(("PADRE", PADRE))
+
+        seq_parts = [b[1] for b in blocks]
+        construct = linker.join(seq_parts)
+
+        # =========================
+        # VISUAL ARCHITECTURE
+        # =========================
+        st.subheader("🧱 Vaccine Architecture")
+
+        cols = st.columns(len(blocks))
+        for (label, seq), c in zip(blocks, cols):
+            color = (
+                "#4CAF50" if label=="Epitope"
+                else "#FF9800" if label=="Adjuvant"
+                else "#03A9F4" if label=="Signal"
+                else "#9C27B0"
+            )
+            c.markdown(
+                f"""
+                <div style="padding:10px;border-radius:10px;background:{color};color:white;text-align:center">
+                <b>{label}</b><br>{len(seq)} aa
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        # =========================
+        # FINAL CONSTRUCT
+        # =========================
+        st.subheader("🧬 Final Vaccine Construct")
+        st.code(construct)
+
+        # =========================
+        # CONSTRUCT METRICS
+        # =========================
+        st.subheader("📊 Construct Developability Metrics")
+
+        qm = construct_quality_metrics(selected if len(selected) > 0 else None)
+
+        if qm:
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Avg GRAVY", f"{qm['Avg GRAVY']:.2f}")
+            c2.metric("Avg Solubility", f"{qm['Avg Solubility']:.2f}")
+            c3.metric("Avg Aggregation", f"{qm['Avg Aggregation']:.2f}")
+            c4.metric("Avg Membrane Bind", f"{qm['Avg Membrane Binding']:.2f}")
+            c5.metric("Developability", f"{qm['Developability Score']:.2f}")
+
+        # =========================
+        # EXPORT
+        # =========================
+        st.subheader("⬇️ Export Vaccine")
+
+        fasta = f">Multi_epitope_vaccine\n{construct}"
+        st.download_button("Download FASTA", fasta, "vaccine.fasta")
+        st.download_button("Download TXT", construct, "vaccine.txt")
 
 # =========================
 # TAB 4 — LANDSCAPE
@@ -232,7 +456,38 @@ with tabs[4]:
 # =========================
 with tabs[5]:
     st.header("🧪 Peptide Chemistry & Developability")
-    st.info("Full chemistry engine will appear here in STEP 2.")
+
+    if "df" not in st.session_state:
+        st.info("Run the pipeline first.")
+    else:
+        df = st.session_state["df"]
+
+        pep = st.selectbox("Select peptide", df["Peptide"])
+        ml_score = df[df["Peptide"] == pep]["FinalScore"].values[0]
+
+        st.subheader("🧬 Sequence")
+        st.code(pep)
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric("GRAVY", f"{gravy(pep):.2f}")
+        col2.metric("Hydrophobic Moment", f"{hydrophobic_moment(pep):.3f}")
+        col3.metric("Aliphatic Index", f"{aliphatic_index(pep):.1f}")
+        col4.metric("Boman Index", f"{boman_index(pep):.2f}")
+
+        col1.metric("Membrane Binding", f"{membrane_binding_prob(pep):.2f}")
+        col2.metric("Solubility", f"{solubility_score(pep):.2f}")
+        col3.metric("Aggregation Risk", f"{aggregation_score(pep):.2f}")
+        col4.metric("Toxicity Risk", f"{toxicity_score(pep):.2f}")
+
+        col1.metric("Protease Stability", f"{protease_stability(pep):.2f}")
+        col2.metric("Multi-objective Score", f"{multi_objective_score(ml_score, pep):.3f}")
+
+        st.subheader("🌀 Helical Wheel")
+        st.pyplot(plot_helical_wheel(pep), use_container_width=False)
+
+        st.subheader("📈 Hydropathy Plot")
+        st.pyplot(plot_hydropathy(pep), use_container_width=False)
 
 # =========================
 # TAB 7 — EXPORT
