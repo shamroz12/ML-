@@ -608,7 +608,7 @@ with tabs[2]:
 
         with colB:
             n_epi = st.slider("Number of epitopes", 3, min(20, len(df)), min(8, len(df)))
-            cell_filter = st.selectbox("Epitope type", ["All"])  # placeholder for future
+            cell_filter = st.selectbox("Epitope type", ["All"])
 
         with colC:
             ordering = st.selectbox("Order epitopes by", ["FinalScore", "Conservancy_%", "Start"])
@@ -624,28 +624,51 @@ with tabs[2]:
                 )
             ]
 
-       use_intelligent = st.checkbox("🧠 Use Intelligent Optimization (recommended)", value=True)
+        # =========================
+        # Intelligent optimization
+        # =========================
+        use_intelligent = st.checkbox("🧠 Use Intelligent Optimization (recommended)", value=True)
 
-if use_intelligent:
-    scores = []
-    for _, r in work.iterrows():
-        pep = r["Peptide"]
-        ml  = r["FinalScore"]
-        s = epitope_developability_score(pep, ml)
-        scores.append(s)
+        if use_intelligent:
+            scores = []
+            for _, r in work.iterrows():
+                pep = r["Peptide"]
+                ml  = r["FinalScore"]
+                s = epitope_developability_score(pep, ml)
+                scores.append(s)
 
-    work = work.copy()
-    work["IntelliScore"] = scores
+            work = work.copy()
+            work["IntelliScore"] = scores
+            work = work.sort_values("IntelliScore", ascending=False)
 
-    work = work.sort_values("IntelliScore", ascending=False)
+            selected = work.head(n_epi)["Peptide"].tolist()
+            selected = optimize_epitope_order_greedy(selected)
 
-    selected = work.head(n_epi)["Peptide"].tolist()
+        else:
+            work = work.sort_values(ordering, ascending=False)
+            selected = work.head(n_epi)["Peptide"].tolist()
 
-    selected = optimize_epitope_order_greedy(selected)
+        # =========================
+        # Build construct
+        # =========================
+        blocks = []
 
-else:
-    work = work.sort_values(ordering, ascending=False)
-    selected = work.head(n_epi)["Peptide"].tolist()
+        if sig != "None":
+            blocks.append(("Signal", SIGNAL_PEPTIDES[sig]))
+
+        if adj != "None":
+            blocks.append(("Adjuvant", ADJUVANTS[adj]))
+
+        blocks.append(("Epitope", selected[0]))
+        for p in selected[1:]:
+            blocks.append(("Linker", linker))
+            blocks.append(("Epitope", p))
+
+        if add_padre:
+            blocks.append(("Linker", linker))
+            blocks.append(("PADRE", PADRE))
+
+        construct = "".join(seq for _, seq in blocks)
 
         # =========================
         # VISUAL ARCHITECTURE
@@ -655,9 +678,9 @@ else:
         cols = st.columns(len(blocks))
         for (label, seq), c in zip(blocks, cols):
             color = (
-                "#4CAF50" if label=="Epitope"
-                else "#FF9800" if label=="Adjuvant"
-                else "#03A9F4" if label=="Signal"
+                "#4CAF50" if label == "Epitope"
+                else "#FF9800" if label == "Adjuvant"
+                else "#03A9F4" if label == "Signal"
                 else "#9C27B0"
             )
             c.markdown(
