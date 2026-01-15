@@ -234,44 +234,55 @@ def construct_quality_metrics(peptides):
     }
     
 # =========================
-# ADVANCED 3D VIEWER
+# ULTRA ADVANCED 3D VIEWER WITH CAMERA CONTROLS
 # =========================
 def show_structure_3d(pdb_text, df):
+
+    # ---- UI CONTROLS ----
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    with c1:
+        style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere"])
+    with c2:
+        color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
+    with c3:
+        focus = st.selectbox("Focus", ["ALL"] + df["Peptide"].tolist())
+    with c4:
+        auto_rotate = st.checkbox("Auto rotate", value=True)
+    with c5:
+        rot_speed = st.slider("Rotation speed", 0.1, 2.0, 0.6)
+    with c6:
+        show_surface = st.checkbox("Show surface", value=True)
+
+    b1, b2, b3, b4 = st.columns(4)
+    zoom_in = b1.button("🔍 Zoom in")
+    zoom_out = b2.button("🔎 Zoom out")
+    reset_view = b3.button("🔁 Reset view")
+    center_view = b4.button("🎯 Center")
+
+    # ---- VIEWER ----
     view = py3Dmol.view(width=1100, height=750)
     view.addModel(pdb_text, "pdb")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        style = st.selectbox("Base style", ["cartoon", "surface", "stick", "sphere"])
-
-    with col2:
-        color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
-
-    with col3:
-        focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
-
-    with col4:
-        rotate = st.checkbox("Auto-rotate", value=True)
 
     # Base style
     if style == "cartoon":
         view.setStyle({"cartoon": {"color": "lightgray"}})
     elif style == "surface":
-        view.setStyle({"surface": {"opacity": 0.7, "color": "lightgray"}})
+        view.setStyle({"surface": {"opacity": 0.85, "color": "lightgray"}})
     elif style == "stick":
-        view.setStyle({"stick": {"radius": 0.2}})
+        view.setStyle({"stick": {"radius": 0.25}})
     else:
-        view.setStyle({"sphere": {"scale": 0.3}})
+        view.setStyle({"sphere": {"scale": 0.35}})
 
     # Lighting & quality
     view.setBackgroundColor("white")
-    view.setViewStyle({"style": "outline", "width": 0.05})
-    view.addSurface(py3Dmol.VDW, {"opacity": 0.25, "color": "white"})
+    view.setViewStyle({"style": "outline", "width": 0.06})
+
+    if show_surface:
+        view.addSurface(py3Dmol.VDW, {"opacity": 0.25, "color": "white"})
 
     scores = df["FinalScore"].values
     cons = df["Conservancy_%"].values
-
     smin, smax = scores.min(), scores.max()
     cmin, cmax = cons.min(), cons.max()
 
@@ -286,7 +297,7 @@ def show_structure_3d(pdb_text, df):
         g = int(255 * t)
         return f"rgb(0,{g},0)"
 
-    # Draw epitopes
+    # ---- COLOR EPITOPES ----
     for _, r in df.iterrows():
         pep = r["Peptide"]
         if focus != "ALL" and pep != focus:
@@ -306,22 +317,36 @@ def show_structure_3d(pdb_text, df):
             {"resi": list(range(start, end + 1))},
             {
                 "cartoon": {"color": col},
-                "stick": {"color": col, "radius": 0.25}
+                "stick": {"color": col, "radius": 0.3}
             }
         )
 
-        view.addSurface(
-            py3Dmol.VDW,
-            {"opacity": 0.6, "color": col},
-            {"resi": list(range(start, end + 1))}
-        )
+        if show_surface:
+            view.addSurface(
+                py3Dmol.VDW,
+                {"opacity": 0.65, "color": col},
+                {"resi": list(range(start, end + 1))}
+            )
+
+    # ---- CAMERA ACTIONS ----
+    if reset_view:
+        view.zoomTo()
+
+    if center_view:
+        view.center()
+
+    if zoom_in:
+        view.zoom(1.3)
+
+    if zoom_out:
+        view.zoom(0.75)
+
+    if auto_rotate:
+        view.spin(True, rot_speed)
 
     view.zoomTo()
 
-    if rotate:
-        view.spin(True)
-
-    components.html(view._make_html(), height=800, scrolling=False)
+    components.html(view._make_html(), height=820, scrolling=False)
 
 # =========================
 # UI
