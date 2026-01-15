@@ -1,5 +1,6 @@
 # =========================
-# Unified Epitope Intelligence & Vaccine Design Platform (FINAL FIXED VERSION)
+# Unified Epitope Intelligence & Vaccine Design Platform
+# CLEAN REBUILD — STEP 1 (Stable Core)
 # =========================
 
 import streamlit as st
@@ -21,12 +22,15 @@ plt.rcParams["figure.dpi"] = 150
 plt.rcParams["savefig.dpi"] = 300
 
 # =========================
-# Page config
+# PAGE CONFIG
 # =========================
-st.set_page_config(page_title="Unified Epitope Intelligence & Vaccine Design Platform", layout="wide")
+st.set_page_config(
+    page_title="Unified Epitope Intelligence & Vaccine Design Platform",
+    layout="wide"
+)
 
 # =========================
-# Load model
+# LOAD MODEL
 # =========================
 @st.cache_resource
 def load_model():
@@ -37,7 +41,7 @@ def load_model():
 model, feature_columns = load_model()
 
 # =========================
-# Constants
+# CONSTANTS
 # =========================
 amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
 dipeptides = [a+b for a,b in product(amino_acids, repeat=2)]
@@ -54,42 +58,49 @@ hydro = {
 "V":4.2,"W":-0.9,"Y":-1.3
 }
 
-aliphatic = set("AVLIM")
+# =========================
+# BASIC UTILITIES
+# =========================
+def read_fasta_multi(text):
+    seqs = []
+    cur = ""
+    for l in text.strip().splitlines():
+        if l.startswith(">"):
+            if cur:
+                seqs.append(cur)
+                cur = ""
+        else:
+            cur += l.strip()
+    if cur:
+        seqs.append(cur)
+    return [s.upper() for s in seqs]
 
-SIGNAL_PEPTIDES = {
-    "None": "",
-    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
-    "IL2": "MYRMQLLSCIALSLALVTNS"
-}
-
-ADJUVANTS = {
-    "None": "",
-    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
-}
-
-PADRE = "AKFVAAWTLKAAA"
+def conservancy_percent(pep, seqs):
+    return 100 * sum(pep in s for s in seqs) / len(seqs)
 
 # =========================
-# Feature extraction
+# FEATURE EXTRACTION (ML)
 # =========================
 def aa_composition(seq):
     L = len(seq)
     return [seq.count(a)/L for a in amino_acids]
 
 def dipeptide_composition(seq):
-    total = len(seq)-1
+    total = len(seq) - 1
     counts = {dp:0 for dp in dipeptides}
     for i in range(total):
         dp = seq[i:i+2]
         if dp in counts:
             counts[dp] += 1
-    return [counts[dp]/total for dp in dipeptides] if total>0 else [0]*400
+    if total <= 0:
+        return [0]*400
+    return [counts[dp]/total for dp in dipeptides]
 
 def physchem(seq):
-    L=len(seq)
-    mw=sum(aa_weights[a] for a in seq)
-    hydv=sum(hydro[a] for a in seq)/L
-    aromatic=sum(a in "FWY" for a in seq)/L
+    L = len(seq)
+    mw = sum(aa_weights[a] for a in seq)
+    hydv = sum(hydro[a] for a in seq) / L
+    aromatic = sum(a in "FWY" for a in seq) / L
     return mw, hydv, aromatic
 
 def extract_features(seq):
@@ -99,137 +110,152 @@ def extract_features(seq):
     return aa + dp + [len(seq), mw, hydv, aromatic]
 
 # =========================
-# Helpers
-# =========================
-def antigenicity_proxy(seq):
-    return sum(hydro[a] for a in seq)/len(seq)
-
-def cell_type_proxy(seq):
-    L=len(seq)
-    hydv=sum(hydro[a] for a in seq)/L
-    if 8<=L<=11 and hydv>1: return "T-cell"
-    if hydv<0: return "B-cell"
-    return "Both"
-
-def read_fasta_multi(text):
-    seqs=[]; cur=""
-    for l in text.strip().splitlines():
-        if l.startswith(">"):
-            if cur: seqs.append(cur); cur=""
-        else: cur+=l.strip()
-    if cur: seqs.append(cur)
-    return [s.upper() for s in seqs]
-
-def conservancy_percent(pep, seqs):
-    return 100*sum(pep in s for s in seqs)/len(seqs)
-
-# =========================
-# Chemistry
-# =========================
-def hydrophobic_moment(seq):
-    L=len(seq)
-    angles=[i*100*pi/180 for i in range(L)]
-    mx=sum(hydro[seq[i]]*cos(angles[i]) for i in range(L))
-    my=sum(hydro[seq[i]]*sin(angles[i]) for i in range(L))
-    return (mx*mx+my*my)**0.5 / L
-
-def gravy(seq): return sum(hydro[a] for a in seq)/len(seq)
-def solubility_score(seq): return 1 / (1 + exp(gravy(seq)))
-def aggregation_score(seq): return max(0, gravy(seq))
-def membrane_binding_prob(seq): return 1/(1+exp(-3*(hydrophobic_moment(seq)+gravy(seq))))
-def toxicity_score(seq): return max(0, gravy(seq)) * (seq.count("K")+seq.count("R"))/len(seq)
-
-# =========================
-# Vaccine quality metrics
-# =========================
-def construct_quality_metrics(peptides):
-    if peptides is None or len(peptides) == 0:
-        return None
-    gravs = [gravy(p) for p in peptides]
-    sols  = [solubility_score(p) for p in peptides]
-    aggs  = [aggregation_score(p) for p in peptides]
-    mems  = [membrane_binding_prob(p) for p in peptides]
-    return {
-        "Avg GRAVY": float(np.mean(gravs)),
-        "Avg Solubility": float(np.mean(sols)),
-        "Avg Aggregation": float(np.mean(aggs)),
-        "Avg Membrane Binding": float(np.mean(mems)),
-        "Developability Score": float(np.mean(sols) - np.mean(aggs))
-    }
-
-# =========================
-# Plots
-# =========================
-def plot_helical_wheel(seq):
-    fig, ax = plt.subplots(figsize=(4,4), dpi=200)
-    angles=[i*100*pi/180 for i in range(len(seq))]
-    for i,a in enumerate(angles):
-        x=cos(a); y=sin(a)
-        ax.scatter(x,y,s=500,c="red" if hydro[seq[i]]>0 else "blue")
-        ax.text(x,y,seq[i],ha="center",va="center",color="white")
-    ax.axis("off"); ax.set_title("Helical Wheel")
-    return fig
-
-def plot_hydropathy(seq):
-    fig,ax=plt.subplots(figsize=(6,2.5), dpi=200)
-    vals=[hydro[a] for a in seq]
-    ax.plot(vals, marker="o")
-    ax.axhline(0, linestyle="--")
-    ax.set_title("Hydropathy")
-    return fig
-
-# =========================
 # UI
 # =========================
+
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
-tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Chemistry","Export","Report"])
+
+tabs = st.tabs([
+    "Pipeline",
+    "SHAP",
+    "Vaccine",
+    "Landscape",
+    "3D",
+    "Chemistry",
+    "Export",
+    "Report"
+])
 
 # =========================
-# PIPELINE
+# TAB 1 — PIPELINE
 # =========================
 with tabs[0]:
-    fasta_input = st.text_area("Paste FASTA:")
+    st.header("🔬 Epitope Mining Pipeline")
+
+    fasta_input = st.text_area("Paste FASTA sequences:")
+    min_len = st.slider("Min length", 8, 15, 9)
+    max_len = st.slider("Max length", 9, 25, 15)
+    top_n = st.selectbox("Top N epitopes", [10,20,50,100])
+
     if st.button("Run Pipeline"):
         seqs = read_fasta_multi(fasta_input)
-        main = seqs[0]
-        peptides=[main[i:i+9] for i in range(len(main)-8)]
-        X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
-        probs = model.predict_proba(X)[:,1]
 
-        rows=[]
-        for pep,ml in zip(peptides,probs):
-            rows.append([pep, ml])
+        if len(seqs) == 0:
+            st.error("Please paste FASTA sequences.")
+        else:
+            main = seqs[0]
 
-        df=pd.DataFrame(rows,columns=["Peptide","FinalScore"]).sort_values("FinalScore",ascending=False)
-        st.session_state["df"]=df
-        st.dataframe(df)
+            peptides = []
+            positions = []
+
+            for L in range(min_len, max_len+1):
+                for i in range(len(main)-L+1):
+                    peptides.append(main[i:i+L])
+                    positions.append(i+1)
+
+            X = pd.DataFrame(
+                [extract_features(p) for p in peptides],
+                columns=feature_columns
+            )
+
+            probs = model.predict_proba(X)[:,1]
+
+            rows = []
+            for pep, pos, ml in zip(peptides, positions, probs):
+                cons = conservancy_percent(pep, seqs)
+                final = 0.7*ml + 0.3*(cons/100)
+                rows.append([pep, pos, len(pep), ml, cons, final])
+
+            df = pd.DataFrame(
+                rows,
+                columns=["Peptide","Start","Length","ML","Conservancy_%","FinalScore"]
+            )
+
+            df = df.sort_values("FinalScore", ascending=False).head(top_n)
+
+            st.session_state["df"] = df
+            st.session_state["X"] = X
+
+            st.success("Pipeline completed.")
+            st.dataframe(df)
 
 # =========================
-# SHAP
+# TAB 2 — SHAP
 # =========================
 with tabs[1]:
+    st.header("🧠 Model Explainability (SHAP)")
     if "df" in st.session_state:
-        st.info("SHAP works on full version – this trimmed file focuses on fixing your crash.")
+        X = st.session_state["X"]
+        explainer = shap.TreeExplainer(model)
+        shap_vals = explainer.shap_values(X.iloc[:20])
+
+        fig, _ = plt.subplots(figsize=(8,5), dpi=200)
+        shap.summary_plot(shap_vals, X.iloc[:20], show=False)
+        st.pyplot(fig, use_container_width=False)
+    else:
+        st.info("Run pipeline first.")
 
 # =========================
-# VACCINE
+# TAB 3 — VACCINE
 # =========================
 with tabs[2]:
-    if "df" in st.session_state:
-        df=st.session_state["df"]
-        n=st.slider("Number of epitopes",3,min(10,len(df)),5)
-        selected=df.head(n)["Peptide"].tolist()
-        construct="GPGPG".join(selected)
-        st.code(construct)
-
-        qm = construct_quality_metrics(selected)
-        st.json(qm)
+    st.header("💉 Multi-Epitope Vaccine Designer")
+    st.info("Vaccine design engine will appear here in STEP 3.")
 
 # =========================
-# CHEMISTRY
+# TAB 4 — LANDSCAPE
+# =========================
+with tabs[3]:
+    st.header("📊 Immunogenic Landscape")
+    if "df" in st.session_state:
+        df = st.session_state["df"]
+        fig, ax = plt.subplots(figsize=(8,3), dpi=200)
+        ax.scatter(df["Start"], df["FinalScore"], s=60)
+        ax.set_title("Immunogenic Landscape")
+        st.pyplot(fig, use_container_width=False)
+
+# =========================
+# TAB 5 — 3D
+# =========================
+with tabs[4]:
+    st.header("🧬 3D Structure Viewer")
+    pdb_file = st.file_uploader("Upload PDB file", type=["pdb"])
+    if pdb_file:
+        view = py3Dmol.view(width=900, height=600)
+        view.addModel(pdb_file.read().decode("utf-8"), "pdb")
+        view.setStyle({"cartoon":{"color":"lightgray"}})
+        view.zoomTo()
+        components.html(view._make_html(), height=650)
+
+# =========================
+# TAB 6 — CHEMISTRY
 # =========================
 with tabs[5]:
+    st.header("🧪 Peptide Chemistry & Developability")
+    st.info("Full chemistry engine will appear here in STEP 2.")
+
+# =========================
+# TAB 7 — EXPORT
+# =========================
+with tabs[6]:
+    st.header("⬇️ Export Results")
     if "df" in st.session_state:
-        pep = st.selectbox("Select peptide", st.session_state["df"]["Peptide"])
-        st.pyplot(plot_helical_wheel(pep), use_container_width=False)
-        st.pyplot(plot_hydropathy(pep), use_container_width=False)
+        df = st.session_state["df"]
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download CSV", csv, "epitopes.csv")
+
+# =========================
+# TAB 8 — REPORT
+# =========================
+with tabs[7]:
+    st.header("📄 PDF Report")
+    if "df" in st.session_state:
+        if st.button("Generate PDF"):
+            df = st.session_state["df"]
+            fig, ax = plt.subplots(figsize=(6,4), dpi=200)
+            ax.scatter(df["Start"], df["FinalScore"])
+            with PdfPages("Report.pdf") as pdf:
+                pdf.savefig(fig)
+
+            with open("Report.pdf","rb") as f:
+                st.download_button("Download PDF", f, "Epitope_Report.pdf")
