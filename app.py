@@ -386,18 +386,11 @@ def show_structure_3d(pdb_text, df):
 
     if auto_rotate:
         view.spin(True, rot_speed)
-
-    if take_shot:
-        view.png()
+        
 
     # ---------------- Render ----------------
     components.html(view._make_html(), height=950, scrolling=False)
-
-    # ---------------- Color Legend ----------------
-    st.markdown("### 🎨 Color Legend")
-    st.image(
-        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Color_scale_spectrum.svg/512px-Color_scale_spectrum.svg.png",
-        caption="Blue → Low | Red → High"
+    
     )
 
 # =========================
