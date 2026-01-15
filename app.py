@@ -321,9 +321,27 @@ with tabs[4]:
 # =========================
 with tabs[5]:
     if "df" in st.session_state:
-        df=st.session_state["df"]
-        st.download_button("Download CSV", df.to_csv(index=False), "epitopes.csv")
+        df = st.session_state["df"]
 
+        if st.button("Generate PDF"):
+            fig, ax = plt.subplots()
+            ax.scatter(df["Start"], df["FinalScore"])
+            ax.set_title("Immunogenic Landscape")
+
+            with PdfPages("Report.pdf") as pdf:
+                pdf.savefig(fig)
+
+            st.success("Report generated!")
+
+            # 👇 ADD THIS
+            with open("Report.pdf", "rb") as f:
+                st.download_button(
+                    label="📥 Download Report.pdf",
+                    data=f,
+                    file_name="Epitope_Report.pdf",
+                    mime="application/pdf"
+                )
+                
 # =========================
 # TAB 7 — REPORT
 # =========================
