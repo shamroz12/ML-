@@ -442,7 +442,6 @@ with tabs[4]:
             selected = st.selectbox("Focus epitope", ep_list)
 
     def show_structure_3d_advanced(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
-  
     view = py3Dmol.view(width=900, height=600)
     view.addModel(pdb_text, "pdb")
 
