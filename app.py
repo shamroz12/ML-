@@ -60,6 +60,23 @@ hydro = {
 }
 
 # =========================
+# VACCINE DESIGN CONSTANTS
+# =========================
+
+SIGNAL_PEPTIDES = {
+    "None": "",
+    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
+    "IL2": "MYRMQLLSCIALSLALVTNS"
+}
+
+ADJUVANTS = {
+    "None": "",
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
+}
+
+PADRE = "AKFVAAWTLKAAA"
+
+# =========================
 # Proxies (REQUIRED BY PIPELINE)
 # =========================
 
