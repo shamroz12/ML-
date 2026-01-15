@@ -245,6 +245,22 @@ def plot_hydropathy(seq):
     ax.set_xlabel("Position")
     ax.set_ylabel("Hydrophobicity")
     return fig
+    def construct_quality_metrics(peptides):
+    if peptides is None or len(peptides) == 0:
+        return None
+
+    gravs = [gravy(p) for p in peptides]
+    sols  = [solubility_score(p) for p in peptides]
+    aggs  = [aggregation_score(p) for p in peptides]
+    mems  = [membrane_binding_prob(p) for p in peptides]
+
+    return {
+        "Avg GRAVY": float(np.mean(gravs)),
+        "Avg Solubility": float(np.mean(sols)),
+        "Avg Aggregation": float(np.mean(aggs)),
+        "Avg Membrane Binding": float(np.mean(mems)),
+        "Developability Score": float(np.mean(sols) - np.mean(aggs))
+    }
 
 # =========================
 # UI
@@ -366,7 +382,7 @@ with tabs[2]:
         st.code(construct)
         
         st.subheader("📊 Construct Quality Metrics")
-        qm = construct_quality_metrics(selected)
+        qm = construct_quality_metrics(selected if len(selected) > 0 else None)
         if qm:
             c1,c2,c3,c4,c5 = st.columns(5)
             c1.metric("Avg GRAVY", f"{qm['Avg GRAVY']:.2f}")
