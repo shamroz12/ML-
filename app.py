@@ -243,7 +243,6 @@ def epitope_developability_score(seq, ml_score):
     except:
         return ml_score
 
-    # Penalize bad properties
     penalty = 0.5*agg + 0.7*tox + 0.3*(1-stab)
 
     score = (
@@ -255,16 +254,12 @@ def epitope_developability_score(seq, ml_score):
 
 
 def junction_penalty(seq1, seq2):
-    """
-    Penalize bad junctions between epitopes.
-    """
     bad_pairs = ["KK", "RR", "KR", "RK", "FF", "WW", "YY"]
     junction = seq1[-1] + seq2[0]
 
     if junction in bad_pairs:
         return 1.0
 
-    # Penalize hydrophobic clustering
     if hydro[seq1[-1]] > 1 and hydro[seq2[0]] > 1:
         return 0.5
 
@@ -272,9 +267,6 @@ def junction_penalty(seq1, seq2):
 
 
 def optimize_epitope_order_greedy(peptides):
-    """
-    Fast greedy ordering to minimize junction penalties.
-    """
     if len(peptides) <= 2:
         return peptides[:]
 
@@ -297,9 +289,6 @@ def optimize_epitope_order_greedy(peptides):
 
 
 def construct_quality_metrics(peptides):
-    """
-    Whole construct developability analysis.
-    """
     if peptides is None or len(peptides) == 0:
         return None
 
@@ -316,44 +305,6 @@ def construct_quality_metrics(peptides):
         "Avg Membrane Binding": float(np.mean(mems)),
         "Avg Toxicity": float(np.mean(toxs)),
         "Developability Score": float(np.mean(sols) - np.mean(aggs) - 0.5*np.mean(toxs))
-    }
-
-# =========================
-# VACCINE DESIGN CONSTANTS
-# =========================
-
-SIGNAL_PEPTIDES = {
-    "None": "",
-    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
-    "IL2": "MYRMQLLSCIALSLALVTNS"
-}
-
-ADJUVANTS = {
-    "None": "",
-    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
-}
-
-PADRE = "AKFVAAWTLKAAA"
-
-# =========================
-# CONSTRUCT QUALITY METRICS
-# =========================
-
-def construct_quality_metrics(peptides):
-    if peptides is None or len(peptides) == 0:
-        return None
-
-    gravs = [gravy(p) for p in peptides]
-    sols  = [solubility_score(p) for p in peptides]
-    aggs  = [aggregation_score(p) for p in peptides]
-    mems  = [membrane_binding_prob(p) for p in peptides]
-
-    return {
-        "Avg GRAVY": float(np.mean(gravs)),
-        "Avg Solubility": float(np.mean(sols)),
-        "Avg Aggregation": float(np.mean(aggs)),
-        "Avg Membrane Binding": float(np.mean(mems)),
-        "Developability Score": float(np.mean(sols) - np.mean(aggs))
     }
 
 def show_structure_3d(pdb_text, df):
@@ -673,24 +624,28 @@ with tabs[2]:
                 )
             ]
 
-        work = work.sort_values(ordering, ascending=False)
+       use_intelligent = st.checkbox("🧠 Use Intelligent Optimization (recommended)", value=True)
 
-        selected = work.head(n_epi)["Peptide"].tolist()
+if use_intelligent:
+    scores = []
+    for _, r in work.iterrows():
+        pep = r["Peptide"]
+        ml  = r["FinalScore"]
+        s = epitope_developability_score(pep, ml)
+        scores.append(s)
 
-        blocks = []
-        if sig != "None":
-            blocks.append(("Signal", SIGNAL_PEPTIDES[sig]))
-        if adj != "None":
-            blocks.append(("Adjuvant", ADJUVANTS[adj]))
+    work = work.copy()
+    work["IntelliScore"] = scores
 
-        for p in selected:
-            blocks.append(("Epitope", p))
+    work = work.sort_values("IntelliScore", ascending=False)
 
-        if add_padre:
-            blocks.append(("PADRE", PADRE))
+    selected = work.head(n_epi)["Peptide"].tolist()
 
-        seq_parts = [b[1] for b in blocks]
-        construct = linker.join(seq_parts)
+    selected = optimize_epitope_order_greedy(selected)
+
+else:
+    work = work.sort_values(ordering, ascending=False)
+    selected = work.head(n_epi)["Peptide"].tolist()
 
         # =========================
         # VISUAL ARCHITECTURE
