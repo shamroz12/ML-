@@ -8,3 +8,4 @@ joblib
 xgboost
 shap
 py3Dmol
+rdkit-pypi
