@@ -302,28 +302,83 @@ with tabs[1]:
         st.pyplot(fig, use_container_width=False)
 
 # =========================
-# VACCINE DESIGNER
+# VACCINE DESIGNER (ADVANCED)
 # =========================
 with tabs[2]:
     if "df" in st.session_state:
         df = st.session_state["df"]
-        st.subheader("🧬 Intelligent Multi-Epitope Vaccine Designer")
 
-        sig = st.selectbox("Signal peptide", list(SIGNAL_PEPTIDES.keys()))
-        adj = st.selectbox("Adjuvant", list(ADJUVANTS.keys()))
-        linker = st.selectbox("Linker", ["GPGPG","AAY","EAAAK"])
-        n_epi = st.slider("Number of epitopes", 3, min(15,len(df)), min(8,len(df)))
+        st.title("🧬 Intelligent Multi-Epitope Vaccine Designer")
 
-        selected = df.head(n_epi)["Peptide"].tolist()
+        colA, colB, colC = st.columns(3)
 
-        parts=[]
-        if sig!="None": parts.append(SIGNAL_PEPTIDES[sig])
-        if adj!="None": parts.append(ADJUVANTS[adj])
-        parts.extend(selected)
-        parts.append(PADRE)
+        with colA:
+            sig = st.selectbox("Signal peptide", list(SIGNAL_PEPTIDES.keys()))
+            adj = st.selectbox("Adjuvant", list(ADJUVANTS.keys()))
+            linker = st.selectbox("Linker", ["GPGPG", "AAY", "EAAAK"])
 
-        construct = linker.join(parts)
+        with colB:
+            n_epi = st.slider("Number of epitopes", 3, min(20, len(df)), min(8, len(df)))
+            cell_filter = st.selectbox("Epitope type", ["All", "T-cell", "B-cell", "Both"])
+
+        with colC:
+            ordering = st.selectbox("Order epitopes by", ["FinalScore", "Conservancy_%", "Start"])
+            add_padre = st.checkbox("Add PADRE helper epitope", value=True)
+            filter_bad = st.checkbox("Remove toxic / aggregating peptides", value=True)
+
+        work = df.copy()
+        if cell_filter != "All":
+            work = work[work["Cell_Type"] == cell_filter]
+
+        if filter_bad:
+            work = work[work["Peptide"].apply(lambda p: aggregation_score(p) < 1.5 and toxicity_score(p) < 1)]
+
+        work = work.sort_values(ordering, ascending=False)
+        selected = work.head(n_epi)["Peptide"].tolist()
+
+        blocks = []
+        if sig != "None":
+            blocks.append(("Signal", SIGNAL_PEPTIDES[sig]))
+        if adj != "None":
+            blocks.append(("Adjuvant", ADJUVANTS[adj]))
+        for p in selected:
+            blocks.append(("Epitope", p))
+        if add_padre:
+            blocks.append(("PADRE", PADRE))
+
+        seq_parts = [b[1] for b in blocks]
+        construct = linker.join(seq_parts)
+
+        st.subheader("🧱 Vaccine Architecture")
+        cols = st.columns(len(blocks))
+        for (label, seq), c in zip(blocks, cols):
+            color = "#4CAF50" if label=="Epitope" else "#FF9800" if label=="Adjuvant" else "#03A9F4" if label=="Signal" else "#9C27B0"
+            c.markdown(
+                f"""
+                <div style="padding:10px;border-radius:10px;background:{color};color:white;text-align:center">
+                <b>{label}</b><br>{len(seq)} aa
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        st.subheader("🧬 Final Vaccine Construct")
         st.code(construct)
+
+        st.subheader("📊 Construct Quality Metrics")
+        qm = construct_quality_metrics(selected)
+        if qm:
+            c1,c2,c3,c4,c5 = st.columns(5)
+            c1.metric("Avg GRAVY", f"{qm['Avg GRAVY']:.2f}")
+            c2.metric("Avg Solubility", f"{qm['Avg Solubility']:.2f}")
+            c3.metric("Avg Aggregation", f"{qm['Avg Aggregation']:.2f}")
+            c4.metric("Avg Membrane Bind", f"{qm['Avg Membrane Binding']:.2f}")
+            c5.metric("Developability", f"{qm['Developability Score']:.2f}")
+
+        st.subheader("⬇️ Export")
+        fasta = f">Multi_epitope_vaccine\n{construct}"
+        st.download_button("Download FASTA", fasta, "vaccine.fasta")
+        st.download_button("Download Sequence TXT", construct, "vaccine.txt")
 
 # =========================
 # LANDSCAPE
