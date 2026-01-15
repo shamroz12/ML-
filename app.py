@@ -232,6 +232,96 @@ def construct_quality_metrics(peptides):
         "Avg Membrane Binding": float(np.mean(mems)),
         "Developability Score": float(np.mean(sols) - np.mean(aggs))
     }
+    
+# =========================
+# ADVANCED 3D VIEWER
+# =========================
+def show_structure_3d(pdb_text, df):
+    view = py3Dmol.view(width=1100, height=750)
+    view.addModel(pdb_text, "pdb")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        style = st.selectbox("Base style", ["cartoon", "surface", "stick", "sphere"])
+
+    with col2:
+        color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
+
+    with col3:
+        focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
+
+    with col4:
+        rotate = st.checkbox("Auto-rotate", value=True)
+
+    # Base style
+    if style == "cartoon":
+        view.setStyle({"cartoon": {"color": "lightgray"}})
+    elif style == "surface":
+        view.setStyle({"surface": {"opacity": 0.7, "color": "lightgray"}})
+    elif style == "stick":
+        view.setStyle({"stick": {"radius": 0.2}})
+    else:
+        view.setStyle({"sphere": {"scale": 0.3}})
+
+    # Lighting & quality
+    view.setBackgroundColor("white")
+    view.setViewStyle({"style": "outline", "width": 0.05})
+    view.addSurface(py3Dmol.VDW, {"opacity": 0.25, "color": "white"})
+
+    scores = df["FinalScore"].values
+    cons = df["Conservancy_%"].values
+
+    smin, smax = scores.min(), scores.max()
+    cmin, cmax = cons.min(), cons.max()
+
+    def score_color(x):
+        t = (x - smin) / (smax - smin + 1e-6)
+        r = int(255 * t)
+        b = int(255 * (1 - t))
+        return f"rgb({r},0,{b})"
+
+    def cons_color(x):
+        t = (x - cmin) / (cmax - cmin + 1e-6)
+        g = int(255 * t)
+        return f"rgb(0,{g},0)"
+
+    # Draw epitopes
+    for _, r in df.iterrows():
+        pep = r["Peptide"]
+        if focus != "ALL" and pep != focus:
+            continue
+
+        start = int(r["Start"])
+        end = int(r["Start"] + r["Length"] - 1)
+
+        if color_mode == "FinalScore":
+            col = score_color(r["FinalScore"])
+        elif color_mode == "Conservancy_%":
+            col = cons_color(r["Conservancy_%"])
+        else:
+            col = "orange"
+
+        view.addStyle(
+            {"resi": list(range(start, end + 1))},
+            {
+                "cartoon": {"color": col},
+                "stick": {"color": col, "radius": 0.25}
+            }
+        )
+
+        view.addSurface(
+            py3Dmol.VDW,
+            {"opacity": 0.6, "color": col},
+            {"resi": list(range(start, end + 1))}
+        )
+
+    view.zoomTo()
+
+    if rotate:
+        view.spin(True)
+
+    components.html(view._make_html(), height=800, scrolling=False)
 
 # =========================
 # UI
@@ -444,12 +534,11 @@ with tabs[3]:
 with tabs[4]:
     st.header("🧬 3D Structure Viewer")
     pdb_file = st.file_uploader("Upload PDB file", type=["pdb"])
-    if pdb_file:
-        view = py3Dmol.view(width=900, height=600)
-        view.addModel(pdb_file.read().decode("utf-8"), "pdb")
-        view.setStyle({"cartoon":{"color":"lightgray"}})
-        view.zoomTo()
-        components.html(view._make_html(), height=650)
+
+    if "df" not in st.session_state:
+        st.info("Run the pipeline first.")
+    elif pdb_file:
+        show_structure_3d(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
 # =========================
 # TAB 6 — CHEMISTRY
