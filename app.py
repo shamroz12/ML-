@@ -365,6 +365,7 @@ with tabs[2]:
         st.subheader("🧬 Final Vaccine Construct")
         st.code(construct)
 
+        
         st.subheader("📊 Construct Quality Metrics")
         qm = construct_quality_metrics(selected)
         if qm:
