@@ -1,5 +1,5 @@
 # =========================
-# Unified Epitope Intelligence & Vaccine Design Platform (STREAMLIT CLOUD SAFE)
+# Unified Epitope Intelligence & Vaccine Design Platform (FULL INDUSTRIAL VERSION)
 # =========================
 
 import streamlit as st
@@ -12,7 +12,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import shap
 import py3Dmol
 import streamlit.components.v1 as components
-from math import cos, sin, pi
+from math import cos, sin, pi, exp
 
 # =========================
 # Page config
@@ -41,25 +41,23 @@ aa_weights = {
 "I":131.2,"K":146.2,"L":131.2,"M":149.2,"N":132.1,"P":115.1,"Q":146.1,
 "R":174.2,"S":105.1,"T":119.1,"V":117.1,"W":204.2,"Y":181.2
 }
+
 hydro = {
 "A":1.8,"C":2.5,"D":-3.5,"E":-3.5,"F":2.8,"G":-0.4,"H":-3.2,"I":4.5,"K":-3.9,
 "L":3.8,"M":1.9,"N":-3.5,"P":-1.6,"Q":-3.5,"R":-4.5,"S":-0.8,"T":-0.7,
 "V":4.2,"W":-0.9,"Y":-1.3
 }
 
-SIGNAL_PEPTIDES = {
-    "None": "",
-    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
-    "IL2": "MYRMQLLSCIALSLALVTNS"
+charge = {
+"A":0,"C":0,"D":-1,"E":-1,"F":0,"G":0,"H":0.1,"I":0,"K":1,"L":0,
+"M":0,"N":0,"P":0,"Q":0,"R":1,"S":0,"T":0,"V":0,"W":0,"Y":0
 }
 
-ADJUVANTS = {
-    "None": "",
-    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
-}
+aromatic_set = set("FWY")
+aliphatic = set("AVLIM")
 
 # =========================
-# Feature extraction
+# Feature extraction (ML)
 # =========================
 def aa_composition(seq):
     L = len(seq)
@@ -119,72 +117,100 @@ def conservancy_percent(pep, seqs):
     return 100*sum(pep in s for s in seqs)/len(seqs)
 
 # =========================
-# 3D Viewer
 # =========================
-def show_structure_3d(pdb_text, df):
-    view = py3Dmol.view(width=1000, height=700)
-    view.addModel(pdb_text, "pdb")
+# ADVANCED PEPTIDE CHEMISTRY ENGINE
+# =========================
+# =========================
 
-    style = st.selectbox("Style", ["cartoon","surface","stick","sphere"])
-    color_mode = st.selectbox("Color by", ["score","cell","conservancy","uniform"])
-    focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
+def hydrophobic_moment(seq):
+    L=len(seq)
+    angles=[i*100*pi/180 for i in range(L)]
+    mx=sum(hydro[seq[i]]*cos(angles[i]) for i in range(L))
+    my=sum(hydro[seq[i]]*sin(angles[i]) for i in range(L))
+    return (mx*mx+my*my)**0.5 / L
 
-    view.setStyle({"cartoon":{"color":"lightgray"}})
+def gravy(seq):
+    return sum(hydro[a] for a in seq)/len(seq)
 
-    scores=df["FinalScore"].values
-    cons=df["Conservancy_%"].values
-    smin,smax=scores.min(),scores.max()
-    cmin,cmax=cons.min(),cons.max()
+def aliphatic_index(seq):
+    return 100 * sum(a in aliphatic for a in seq) / len(seq)
 
-    def score_color(x):
-        t=(x-smin)/(smax-smin+1e-6)
-        return f"rgb({int(255*t)},0,{int(255*(1-t))})"
+def boman_index(seq):
+    return -sum(hydro[a] for a in seq)/len(seq)
 
-    def cons_color(x):
-        t=(x-cmin)/(cmax-cmin+1e-6)
-        return f"rgb(0,{int(255*t)},0)"
+def instability_index(seq):
+    return 10 * sum(seq[i]==seq[i+1] for i in range(len(seq)-1))
 
-    cell_colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
+def membrane_binding_prob(seq):
+    x = 0.8*hydrophobic_moment(seq) + 0.5*gravy(seq)
+    return 1/(1+exp(-3*x))
 
-    for _,r in df.iterrows():
-        pep=r["Peptide"]
-        if focus!="ALL" and pep!=focus: continue
+def cpp_score(seq):
+    return (sum(a in "KR" for a in seq)/len(seq)) * 10
 
-        s=int(r["Start"])
-        e=int(r["Start"]+r["Length"])
+def aggregation_score(seq):
+    return max(0, gravy(seq)) + sum(a in "IVLFWY" for a in seq)/len(seq)
 
-        if color_mode=="score": col=score_color(r["FinalScore"])
-        elif color_mode=="conservancy": col=cons_color(r["Conservancy_%"])
-        elif color_mode=="cell": col=cell_colors[r["Cell_Type"]]
-        else: col="orange"
+def toxicity_score(seq):
+    return (sum(a in "KR" for a in seq)/len(seq)) * gravy(seq)**2
 
-        view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
+def protease_stability(seq):
+    cuts = sum(a in "KR" for a in seq[1:-1])
+    return 1 / (1 + cuts)
 
-    view.zoomTo()
-    components.html(view._make_html(), height=750, scrolling=False)
+def solubility_score(seq):
+    return 1 / (1 + exp(gravy(seq)))
+
+def immunogenicity_solubility_tradeoff(final_ml, seq):
+    return 0.6*final_ml + 0.4*solubility_score(seq)
 
 # =========================
-# Chemistry plots
+# Helical wheel
 # =========================
 def plot_helical_wheel(seq):
-    angles = [i*100*pi/180 for i in range(len(seq))]
-    fig, ax = plt.subplots(figsize=(4,4))
+    L=len(seq)
+    angles=[i*100*pi/180 for i in range(L)]
+    fig, ax = plt.subplots(figsize=(6,6))
+    xs=[]; ys=[]
     for i,a in enumerate(angles):
-        x,y = cos(a), sin(a)
-        ax.text(x,y,seq[i], ha="center", va="center")
-    ax.set_title("Helical Wheel Projection")
+        x=cos(a); y=sin(a)
+        xs.append(x); ys.append(y)
+        aa=seq[i]
+        c="red" if hydro[aa]>1 else "blue" if hydro[aa]<-1 else "green"
+        ax.scatter(x,y,s=1000,c=c,alpha=0.7)
+        ax.text(x,y,aa,ha="center",va="center",color="white",fontweight="bold")
+    mx=sum(hydro[seq[i]]*xs[i] for i in range(L))
+    my=sum(hydro[seq[i]]*ys[i] for i in range(L))
+    ax.arrow(0,0,mx/5,my/5,head_width=0.1,color="black",linewidth=3)
+    circle=plt.Circle((0,0),1,fill=False,linestyle="dashed")
+    ax.add_artist(circle)
+    ax.set_aspect("equal")
     ax.axis("off")
+    ax.set_title("Helical Wheel Projection")
+    return fig
+
+def plot_hydropathy(seq):
+    vals=[hydro[a] for a in seq]
+    fig,ax=plt.subplots(figsize=(8,3))
+    ax.plot(range(1,len(seq)+1),vals,marker="o")
+    ax.axhline(0,linestyle="--")
+    ax.set_title("Hydropathy Plot")
+    ax.set_xlabel("Position")
+    ax.set_ylabel("Hydrophobicity")
     return fig
 
 # =========================
+# =========================
 # UI
 # =========================
+# =========================
+
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
 
 tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Chemistry","Export","Report"])
 
 # =========================
-# TAB 1 — PIPELINE
+# PIPELINE
 # =========================
 with tabs[0]:
     fasta_input = st.text_area("Paste FASTA:")
@@ -221,7 +247,7 @@ with tabs[0]:
         st.dataframe(df)
 
 # =========================
-# TAB 2 — SHAP
+# SHAP
 # =========================
 with tabs[1]:
     if "df" in st.session_state:
@@ -233,19 +259,16 @@ with tabs[1]:
         st.pyplot(fig)
 
 # =========================
-# TAB 3 — VACCINE
+# VACCINE
 # =========================
 with tabs[2]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        sig=st.selectbox("Signal",list(SIGNAL_PEPTIDES.keys()))
-        adj=st.selectbox("Adjuvant",list(ADJUVANTS.keys()))
-        linker="GPGPG"
-        construct = SIGNAL_PEPTIDES[sig] + ADJUVANTS[adj] + linker.join(df["Peptide"].tolist())
+        construct="GPGPG".join(df["Peptide"].tolist())
         st.code(construct)
 
 # =========================
-# TAB 4 — LANDSCAPE
+# LANDSCAPE
 # =========================
 with tabs[3]:
     if "df" in st.session_state:
@@ -256,36 +279,58 @@ with tabs[3]:
         st.pyplot(fig)
 
 # =========================
-# TAB 5 — 3D
-# =========================
-with tabs[4]:
-    pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
-    if "df" in st.session_state and pdb_file:
-        show_structure_3d(pdb_file.read().decode("utf-8"), st.session_state["df"])
-
-# =========================
-# TAB 6 — CHEMISTRY
+# CHEMISTRY
 # =========================
 with tabs[5]:
     if "df" in st.session_state:
-        pep = st.selectbox("Select peptide", st.session_state["df"]["Peptide"])
-        fig = plot_helical_wheel(pep)
-        st.pyplot(fig)
+        df=st.session_state["df"]
+        pep = st.selectbox("Select peptide", df["Peptide"])
+        ml_score = df[df["Peptide"]==pep]["FinalScore"].values[0]
+
+        st.subheader("🧪 Full Developability & Chemistry Analysis")
+        st.code(pep)
+
+        col1,col2,col3,col4 = st.columns(4)
+
+        col1.metric("GRAVY", f"{gravy(pep):.2f}")
+        col2.metric("Hydrophobic Moment", f"{hydrophobic_moment(pep):.3f}")
+        col3.metric("Aliphatic Index", f"{aliphatic_index(pep):.1f}")
+        col4.metric("Boman Index", f"{boman_index(pep):.2f}")
+
+        col1.metric("Membrane Binding Prob", f"{membrane_binding_prob(pep):.2f}")
+        col2.metric("CPP Score", f"{cpp_score(pep):.2f}")
+        col3.metric("Aggregation Risk", f"{aggregation_score(pep):.2f}")
+        col4.metric("Toxicity Risk", f"{toxicity_score(pep):.2f}")
+
+        col1.metric("Protease Stability", f"{protease_stability(pep):.2f}")
+        col2.metric("Solubility", f"{solubility_score(pep):.2f}")
+        col3.metric("Multi-objective Score", f"{immunogenicity_solubility_tradeoff(ml_score, pep):.3f}")
+
+        st.subheader("🌀 Helical Wheel")
+        st.pyplot(plot_helical_wheel(pep))
+
+        st.subheader("📈 Hydropathy Plot")
+        st.pyplot(plot_hydropathy(pep))
 
 # =========================
-# TAB 7 — EXPORT + PDF
+# EXPORT
 # =========================
-with tabs[7]:
+with tabs[6]:
     if "df" in st.session_state:
-        df = st.session_state["df"]
+        df=st.session_state["df"]
         csv=df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download CSV",csv,"epitopes.csv")
 
+# =========================
+# REPORT
+# =========================
+with tabs[7]:
+    if "df" in st.session_state:
         if st.button("Generate PDF"):
+            df=st.session_state["df"]
             fig,ax=plt.subplots()
             ax.scatter(df["Start"],df["FinalScore"])
             with PdfPages("Report.pdf") as pdf:
                 pdf.savefig(fig)
-
             with open("Report.pdf","rb") as f:
                 st.download_button("⬇️ Download PDF", f, "Epitope_Report.pdf")
