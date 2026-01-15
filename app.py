@@ -233,18 +233,14 @@ def construct_quality_metrics(peptides):
         "Developability Score": float(np.mean(sols) - np.mean(aggs))
     }
 
-# =========================
-# PROFESSIONAL 3D VIEWER — HQ, STABLE CAMERA, MULTI-SPECTRAL COLORS
-# =========================
-
 def show_structure_3d(pdb_text, df):
 
-    st.subheader("🧬 Advanced 3D Epitope Structure Viewer")
+    st.subheader("🧬 3D Structure Viewer (Performance Safe Mode)")
 
-    # ---------------- UI ----------------
+    # ============ UI ============
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere", "line"])
+        style = st.selectbox("Style", ["cartoon", "stick", "sphere", "line", "surface"])
     with c2:
         color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "Electrostatic", "uniform"])
     with c3:
@@ -254,82 +250,53 @@ def show_structure_3d(pdb_text, df):
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
-        opacity = st.slider("Transparency", 0.3, 1.0, 1.0)
+        opacity = st.slider("Transparency", 0.4, 1.0, 1.0)
     with c6:
-        rot_speed = st.slider("Rotation speed", 0.1, 1.0, 0.4)
+        rot_speed = st.slider("Rotation speed", 0.1, 0.5, 0.2)
     with c7:
-        bg = st.selectbox("Background", ["white", "black", "gray"])
+        bg = st.selectbox("Background", ["white", "black"])
     with c8:
-        take_shot = st.button("📸 Screenshot")
+        high_quality = st.checkbox("High quality (slow)", value=False)
 
-    # ---------------- Chain Selector ----------------
-    chain = st.text_input("Chain selector (e.g. A or B). Leave empty for all chains:", "")
+    chain = st.text_input("Chain (leave empty for all):", "")
 
-    # ---------------- Zoom Buttons ----------------
-    z1, z2, z3, z4 = st.columns(4)
-    zoom_in = z1.button("🔍 Zoom in")
-    zoom_out = z2.button("🔎 Zoom out")
-    reset_view = z3.button("🔁 Reset zoom")
-    center_view = z4.button("🎯 Center")
-
-    if "zoom_factor" not in st.session_state:
-        st.session_state.zoom_factor = 1.0
-
-    if zoom_in:
-        st.session_state.zoom_factor *= 1.15
-    if zoom_out:
-        st.session_state.zoom_factor /= 1.15
-    if reset_view:
-        st.session_state.zoom_factor = 1.0
-
-    # ---------------- Viewer ----------------
-    view = py3Dmol.view(width=1600, height=900)
+    # ============ Viewer ============
+    view = py3Dmol.view(width=1000, height=650)
     view.addModel(pdb_text, "pdb")
     view.setBackgroundColor(bg)
 
-    # ---------------- Selection ----------------
     selector = {}
     if chain.strip():
         selector["chain"] = chain.strip()
 
-    # ---------------- Base Style ----------------
-    if style == "cartoon":
-        view.setStyle(selector, {"cartoon": {"color": "lightgray", "opacity": opacity}})
-    elif style == "surface":
-        view.setStyle(selector, {"surface": {"opacity": opacity}})
-    elif style == "stick":
-        view.setStyle(selector, {"stick": {"radius": 0.3}})
-    elif style == "sphere":
-        view.setStyle(selector, {"sphere": {"scale": 0.3}})
-    elif style == "line":
-        view.setStyle(selector, {"line": {}})
+    # ============ Base style ============
+    if style == "surface":
+        if not high_quality:
+            st.warning("⚠ Surface is heavy. Enable High Quality only if needed.")
+        view.setStyle(selector, {
+            "surface": {
+                "opacity": opacity,
+                "colorscheme": "whiteCarbon",
+                "resolution": 12 if high_quality else 6   # CRITICAL performance control
+            }
+        })
+    else:
+        view.setStyle(selector, {style: {"opacity": opacity}})
 
-    # ---------------- Color Scaling ----------------
+    # ============ Coloring ============
     scores = df["FinalScore"].values
     cons = df["Conservancy_%"].values
     smin, smax = scores.min(), scores.max()
     cmin, cmax = cons.min(), cons.max()
 
-    def spectral_color(t):
+    def fast_color(t):
+        # fast blue → green → red
         t = max(0, min(1, t))
-        colors = [
-            (0,0,128),(0,0,255),(0,128,255),(0,255,255),
-            (0,255,128),(0,255,0),(128,255,0),(255,255,0),
-            (255,180,0),(255,100,0),(255,0,0),(128,0,0)
-        ]
-        n = len(colors) - 1
-        pos = t * n
-        i = int(pos)
-        f = pos - i
-        if i >= n:
-            return f"rgb{colors[-1]}"
-        c1, c2 = colors[i], colors[i+1]
-        r = int(c1[0] + (c2[0]-c1[0])*f)
-        g = int(c1[1] + (c2[1]-c1[1])*f)
-        b = int(c1[2] + (c2[2]-c1[2])*f)
-        return f"rgb({r},{g},{b})"
+        if t < 0.5:
+            return f"rgb(0,{int(255*t*2)},255)"
+        else:
+            return f"rgb({int(255*(t-0.5)*2)},255,0)"
 
-    # ---------------- Epitope Coloring ----------------
     for _, r in df.iterrows():
         pep = r["Peptide"]
         if focus != "ALL" and pep != focus:
@@ -340,56 +307,39 @@ def show_structure_3d(pdb_text, df):
 
         if color_mode == "FinalScore":
             t = (r["FinalScore"] - smin) / (smax - smin + 1e-6)
-            col = spectral_color(t)
-
         elif color_mode == "Conservancy_%":
             t = (r["Conservancy_%"] - cmin) / (cmax - cmin + 1e-6)
-            col = spectral_color(t)
-
         elif color_mode == "Electrostatic":
-            # basic charge coloring: + = blue, - = red
             pepseq = r["Peptide"]
             charge_score = sum(1 if a in "KR" else -1 if a in "DE" else 0 for a in pepseq) / len(pepseq)
             t = (charge_score + 1) / 2
-            col = spectral_color(1 - t)
-
         else:
-            col = "orange"
+            t = 0.5
+
+        col = fast_color(t)
 
         sel = {"resi": list(range(start, end+1))}
         if chain.strip():
             sel["chain"] = chain.strip()
 
-        view.addStyle(
-            sel,
-            {
-                "cartoon": {"color": col, "opacity": 1.0},
-                "stick": {"color": col},
-                "sphere": {"color": col},
-                "surface": {"color": col, "opacity": opacity}
-            }
-        )
+        view.addStyle(sel, {
+            "cartoon": {"color": col},
+            "stick": {"color": col},
+            "sphere": {"color": col},
+            "line": {"color": col},
+            "surface": {"color": col, "opacity": opacity}
+        })
 
-        mid = int((start + end) / 2)
-        view.addLabel(
-            f"{start}-{end}",
-            {"fontSize": 12, "backgroundColor": "white", "fontColor": "black"},
-            {"resi": mid}
-        )
-
-    # ---------------- Camera ----------------
+    # ============ Camera ============
     view.zoomTo()
-    view.zoom(st.session_state.zoom_factor)
-
-    if center_view:
-        view.center()
 
     if auto_rotate:
         view.spin(True, rot_speed)
-        
 
-    # ---------------- Render ----------------
-    components.html(view._make_html(), height=950, scrolling=False)
+    # ============ Render ============
+    components.html(view._make_html(), height=700, scrolling=False)
+
+    st.info("💡 Tip: Use 'cartoon' or 'stick' for speed. Use 'surface' only when needed.")
 
 # =========================
 # UI
