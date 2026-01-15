@@ -242,6 +242,78 @@ def plot_hydropathy(seq):
     ax.set_ylabel("Hydrophobicity")
 
     return fig
+    def amphipathic_score(seq):
+    """
+    Quantify amphipathicity: hydrophobic moment / average hydrophobicity
+    """
+    mu = hydrophobic_moment(seq)
+    g = abs(gravy(seq)) + 1e-6
+    return mu / g
+
+
+def sliding_hydrophobic_moment(seq, window=9):
+    """
+    Compute sliding window hydrophobic moment profile
+    """
+    if len(seq) < window:
+        return [hydrophobic_moment(seq)]
+
+    vals = []
+    for i in range(len(seq) - window + 1):
+        frag = seq[i:i+window]
+        vals.append(hydrophobic_moment(frag))
+    return vals
+
+
+def plot_hydrophobic_moment_profile(seq):
+    vals = sliding_hydrophobic_moment(seq, window=min(9, len(seq)))
+
+    fig, ax = plt.subplots(figsize=(6, 3), dpi=200)
+    ax.plot(range(1, len(vals)+1), vals, marker="o")
+    ax.set_title("Sliding Hydrophobic Moment Profile")
+    ax.set_xlabel("Window position")
+    ax.set_ylabel("Hydrophobic moment (μH)")
+    ax.grid(alpha=0.3)
+    return fig
+
+
+def plot_charge_distribution(seq):
+    charges = []
+    for a in seq:
+        if a in "KRH":
+            charges.append(1)
+        elif a in "DE":
+            charges.append(-1)
+        else:
+            charges.append(0)
+
+    fig, ax = plt.subplots(figsize=(6, 2.5), dpi=200)
+    ax.bar(range(1, len(seq)+1), charges)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_title("Charge Distribution Along Sequence")
+    ax.set_xlabel("Position")
+    ax.set_ylabel("Charge")
+    ax.set_yticks([-1, 0, 1])
+    ax.set_yticklabels(["−", "0", "+"])
+    return fig
+
+
+def classify_peptide_chemistry(seq):
+    """
+    Simple interpretable chemistry classifier
+    """
+    mu = hydrophobic_moment(seq)
+    g = gravy(seq)
+    amph = amphipathic_score(seq)
+
+    if mu > 0.4 and amph > 0.8:
+        return "Strong amphipathic helix (membrane-active)"
+    elif g > 1.0:
+        return "Highly hydrophobic (aggregation-prone)"
+    elif abs(g) < 0.3:
+        return "Likely disordered / soluble"
+    else:
+        return "Moderately amphipathic"
 
 # =========================
 # VACCINE INTELLIGENCE ENGINE (SAFE MODE)
@@ -944,42 +1016,55 @@ with tabs[4]:
         show_structure_3d(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
 # =========================
-# TAB 6 — CHEMISTRY
+# CHEMISTRY
 # =========================
 with tabs[5]:
-    st.header("🧪 Peptide Chemistry & Developability")
-
-    if "df" not in st.session_state:
-        st.info("Run the pipeline first.")
-    else:
+    if "df" in st.session_state:
         df = st.session_state["df"]
-
         pep = st.selectbox("Select peptide", df["Peptide"])
-        ml_score = df[df["Peptide"] == pep]["FinalScore"].values[0]
 
-        st.subheader("🧬 Sequence")
+        st.subheader("🧪 Peptide Chemistry Analysis")
         st.code(pep)
 
-        col1, col2, col3, col4 = st.columns(4)
+        # =========================
+        # Key chemistry metrics
+        # =========================
+        mu = hydrophobic_moment(pep)
+        g = gravy(pep)
+        amph = amphipathic_score(pep)
+        cls = classify_peptide_chemistry(pep)
 
-        col1.metric("GRAVY", f"{gravy(pep):.2f}")
-        col2.metric("Hydrophobic Moment", f"{hydrophobic_moment(pep):.3f}")
-        col3.metric("Aliphatic Index", f"{aliphatic_index(pep):.1f}")
-        col4.metric("Boman Index", f"{boman_index(pep):.2f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("GRAVY", f"{g:.2f}")
+        c2.metric("Hydrophobic Moment μH", f"{mu:.2f}")
+        c3.metric("Amphipathic Score", f"{amph:.2f}")
+        c4.metric("Chemistry Type", cls)
 
-        col1.metric("Membrane Binding", f"{membrane_binding_prob(pep):.2f}")
-        col2.metric("Solubility", f"{solubility_score(pep):.2f}")
-        col3.metric("Aggregation Risk", f"{aggregation_score(pep):.2f}")
-        col4.metric("Toxicity Risk", f"{toxicity_score(pep):.2f}")
+        # =========================
+        # Structural plots
+        # =========================
+        st.subheader("🧬 Structural Chemistry Visualizations")
 
-        col1.metric("Protease Stability", f"{protease_stability(pep):.2f}")
-        col2.metric("Multi-objective Score", f"{multi_objective_score(ml_score, pep):.3f}")
+        col1, col2 = st.columns(2)
 
-        st.subheader("🌀 Helical Wheel")
-        st.pyplot(plot_helical_wheel(pep), use_container_width=False)
+        with col1:
+            st.pyplot(plot_helical_wheel(pep), use_container_width=False)
 
-        st.subheader("📈 Hydropathy Plot")
-        st.pyplot(plot_hydropathy(pep), use_container_width=False)
+        with col2:
+            st.pyplot(plot_hydropathy(pep), use_container_width=False)
+
+        # =========================
+        # Amphipathicity & charge
+        # =========================
+        st.subheader("📈 Amphipathicity & Charge Analysis")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            st.pyplot(plot_hydrophobic_moment_profile(pep), use_container_width=False)
+
+        with col4:
+            st.pyplot(plot_charge_distribution(pep), use_container_width=False)
 
 # =========================
 # TAB 7 — EXPORT
