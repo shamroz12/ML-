@@ -342,24 +342,24 @@ def show_structure_3d(pdb_text, df):
 
     st.info("💡 Tip: Use 'cartoon' or 'stick' for speed. Use 'surface' only when needed.")
 
-def plot_immunogenic_landscape(df, color_by="FinalScore"):
+def plot_immunogenic_landscape(df, metric_col):
     import numpy as np
 
     x = df["Start"].values
-    y = df[color_by].values
+    y = df[metric_col].values
 
     # Sort by position
     order = np.argsort(x)
     x = x[order]
     y = y[order]
 
-    # Smooth curve (simple moving average)
+    # Smooth curve
     window = max(3, len(y)//10)
     y_smooth = np.convolve(y, np.ones(window)/window, mode="same")
 
     fig, ax = plt.subplots(figsize=(9, 3.8), dpi=200)
 
-    # Scatter with color map
+    # Scatter
     sc = ax.scatter(
         x, y,
         c=y,
@@ -367,17 +367,17 @@ def plot_immunogenic_landscape(df, color_by="FinalScore"):
         s=70,
         edgecolors="black",
         linewidths=0.3,
-        alpha=0.85
+        alpha=0.9
     )
 
-    # Smoothed trend line
+    # Smoothed trend
     ax.plot(x, y_smooth, color="red", linewidth=2, label="Smoothed trend")
 
-    # Best epitope marker
+    # Best epitope
     best_idx = np.argmax(y)
     ax.scatter(
         x[best_idx], y[best_idx],
-        s=180,
+        s=200,
         color="gold",
         edgecolors="black",
         zorder=5,
@@ -388,15 +388,15 @@ def plot_immunogenic_landscape(df, color_by="FinalScore"):
     mean_val = np.mean(y)
     ax.axhline(mean_val, linestyle="--", color="gray", linewidth=1, label="Mean")
 
-    ax.set_title("Immunogenic Landscape Across Protein", fontsize=12)
+    ax.set_title("Immunogenic Landscape Across Protein", fontsize=13)
     ax.set_xlabel("Position in protein")
-    ax.set_ylabel(color_by)
+    ax.set_ylabel(metric_col)
 
     cbar = plt.colorbar(sc, ax=ax)
-    cbar.set_label(color_by)
+    cbar.set_label(metric_col)
 
     ax.legend()
-    ax.grid(alpha=0.2)
+    ax.grid(alpha=0.25)
 
     return fig
 
@@ -602,15 +602,24 @@ with tabs[3]:
 
         st.subheader("📊 Immunogenic Landscape Analysis")
 
-        color_by = st.selectbox(
+        # SAFE mapping (no KeyError possible)
+        metric_map = {
+            "Final Immunogenic Score": "FinalScore",
+            "Conservancy": "Conservancy_%",
+            "Antigenicity": "Antigenicity"
+        }
+
+        label = st.selectbox(
             "Color / plot by",
-            ["FinalScore", "Conservancy_%", "Antigenicity"]
+            list(metric_map.keys())
         )
 
-        fig = plot_immunogenic_landscape(df, color_by=color_by)
+        metric_col = metric_map[label]
+
+        fig = plot_immunogenic_landscape(df, metric_col)
         st.pyplot(fig, use_container_width=False)
 
-        st.info("🔍 This plot shows immunogenic hotspots, clustering, and overall coverage along the protein.")
+        st.info("🔍 This plot shows immunogenic hotspots, clustering, and coverage across the protein.")
 
 # =========================
 # TAB 5 — 3D
