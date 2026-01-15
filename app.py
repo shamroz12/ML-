@@ -510,84 +510,163 @@ tabs = st.tabs([
 ])
 
 # =========================
-# TAB 1 — PIPELINE
+# TAB 1 — PIPELINE (EXPERT MODE)
 # =========================
 with tabs[0]:
-    st.header("🧬 Epitope Prediction Pipeline")
+    st.header("🧪 Epitope Discovery Pipeline (Expert Mode)")
 
-    fasta_input = st.text_area("Paste FASTA sequences (first = reference):")
-    min_len = st.slider("Min peptide length", 8, 15, 9)
-    max_len = st.slider("Max peptide length", 9, 25, 15)
-    top_n = st.selectbox("Top N epitopes", [10, 20, 50, 100])
+    fasta_input = st.text_area("Paste FASTA sequences (first = reference):", height=200)
 
-    if st.button("Run Pipeline"):
+    st.subheader("🔍 Peptide Generation")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_len = st.slider("Min length", 8, 15, 9)
+    with col2:
+        max_len = st.slider("Max length", 9, 30, 15)
+    with col3:
+        top_n = st.selectbox("Final Top N", [10, 20, 50, 100])
 
-        # ---- Read sequences ----
+    st.subheader("🧹 Pre-filters")
+    fcol1, fcol2, fcol3, fcol4, fcol5 = st.columns(5)
+    with fcol1:
+        use_tox = st.checkbox("Remove toxic", value=True)
+    with fcol2:
+        use_agg = st.checkbox("Remove aggregating", value=True)
+    with fcol3:
+        use_sol = st.checkbox("Remove low solubility", value=True)
+    with fcol4:
+        use_hydro = st.checkbox("Remove very hydrophobic", value=False)
+    with fcol5:
+        use_stab = st.checkbox("Remove unstable", value=False)
+
+    st.subheader("⚖️ Scoring Weights (Multi-objective)")
+    wcol1, wcol2, wcol3, wcol4, wcol5 = st.columns(5)
+    with wcol1:
+        w_ml = st.slider("ML weight", 0.0, 1.0, 0.5)
+    with wcol2:
+        w_cons = st.slider("Conservancy weight", 0.0, 1.0, 0.2)
+    with wcol3:
+        w_sol = st.slider("Solubility weight", 0.0, 1.0, 0.2)
+    with wcol4:
+        w_stab = st.slider("Stability weight", 0.0, 1.0, 0.1)
+    with wcol5:
+        w_pen = st.slider("Penalty weight (agg+tox)", 0.0, 1.0, 0.3)
+
+    st.subheader("🧬 Strategy Presets")
+    preset = st.selectbox(
+        "Optimization goal",
+        ["🔥 Maximum immunogenicity", "🏭 Best manufacturability", "⚖️ Balanced vaccine design"]
+    )
+
+    if preset == "🔥 Maximum immunogenicity":
+        w_ml, w_cons, w_sol, w_stab, w_pen = 0.7, 0.2, 0.05, 0.05, 0.1
+    elif preset == "🏭 Best manufacturability":
+        w_ml, w_cons, w_sol, w_stab, w_pen = 0.3, 0.1, 0.4, 0.2, 0.4
+    elif preset == "⚖️ Balanced vaccine design":
+        w_ml, w_cons, w_sol, w_stab, w_pen = 0.5, 0.2, 0.2, 0.1, 0.2
+
+    st.info(f"Current weights → ML:{w_ml} Conservancy:{w_cons} Solubility:{w_sol} Stability:{w_stab} Penalty:{w_pen}")
+
+    if st.button("🚀 Run Expert Pipeline"):
+
+        # =========================
+        # Parse FASTA
+        # =========================
         seqs = read_fasta_multi(fasta_input)
         if len(seqs) == 0:
-            st.error("Please paste FASTA sequences.")
+            st.error("Please paste valid FASTA.")
             st.stop()
 
         main = seqs[0]
 
-        # ---- Generate peptides ----
+        # =========================
+        # Generate peptides
+        # =========================
         peptides = []
         positions = []
+        for L in range(min_len, max_len+1):
+            for i in range(len(main)-L+1):
+                peptides.append(main[i:i+L])
+                positions.append(i+1)
 
-        for L in range(min_len, max_len + 1):
-            for i in range(len(main) - L + 1):
-                pep = main[i:i+L]
-                peptides.append(pep)
-                positions.append(i + 1)
+        st.write(f"Generated {len(peptides)} peptides.")
 
-        # ---- Feature extraction ----
+        # =========================
+        # Feature extraction + ML
+        # =========================
         X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
+        probs = model.predict_proba(X)[:,1]
 
-        # ---- ML prediction ----
-        probs = model.predict_proba(X)[:, 1]
-
-        # ---- Build result table ----
+        # =========================
+        # Build table
+        # =========================
         rows = []
-
         for pep, pos, ml in zip(peptides, positions, probs):
             cons = conservancy_percent(pep, seqs)
-            antig = antigenicity_proxy(pep)
-            final = 0.6 * ml + 0.3 * (cons / 100) + 0.1 * (antig / 5)
+            sol  = solubility_score(pep)
+            agg  = aggregation_score(pep)
+            tox  = toxicity_score(pep)
+            stab = protease_stability(pep)
 
-            rows.append([
-                pep,
-                pos,
-                len(pep),
-                ml,
-                cons,
-                antig,
-                final,
-                cell_type_proxy(pep)
-            ])
+            rows.append([pep, pos, len(pep), ml, cons, sol, agg, tox, stab])
 
-        df = pd.DataFrame(
-            rows,
-            columns=[
-                "Peptide",
-                "Start",
-                "Length",
-                "ML",
-                "Conservancy_%",
-                "Antigenicity",
-                "FinalScore",
-                "Cell_Type"
-            ]
+        df = pd.DataFrame(rows, columns=[
+            "Peptide","Start","Length","ML","Conservancy_%","Solubility","Aggregation","Toxicity","Stability"
+        ])
+
+        start_n = len(df)
+
+        # =========================
+        # Apply filters
+        # =========================
+        if use_tox:
+            df = df[df["Toxicity"] < 1]
+        if use_agg:
+            df = df[df["Aggregation"] < 1.5]
+        if use_sol:
+            df = df[df["Solubility"] > 0.3]
+        if use_hydro:
+            df = df[df["Peptide"].apply(lambda p: gravy(p) < 2)]
+        if use_stab:
+            df = df[df["Stability"] > 0.3]
+
+        st.write(f"After filtering: {len(df)} peptides remain (from {start_n})")
+
+        # =========================
+        # Multi-objective score
+        # =========================
+        df["Penalty"] = df["Aggregation"] + df["Toxicity"]
+
+        df["FinalScore"] = (
+            w_ml   * df["ML"] +
+            w_cons * (df["Conservancy_%"]/100) +
+            w_sol  * df["Solubility"] +
+            w_stab * df["Stability"] -
+            w_pen  * df["Penalty"]
         )
 
-        df.columns = df.columns.str.strip()
-        df = df.sort_values("FinalScore", ascending=False).head(top_n)
+        df = df.sort_values("FinalScore", ascending=False)
 
-        # ---- Save results ----
-        st.session_state["df"] = df
-        st.session_state["X"] = X
+        # =========================
+        # Save state
+        # =========================
+        st.session_state["df"] = df.head(top_n).reset_index(drop=True)
+        st.session_state["X"]  = X.loc[df.head(top_n).index]
 
-        st.success("Pipeline completed successfully.")
-        st.dataframe(df)
+        # =========================
+        # Show results
+        # =========================
+        st.subheader("🏆 Final Ranked Epitopes")
+        st.dataframe(st.session_state["df"])
+
+        # =========================
+        # Pipeline stats
+        # =========================
+        st.subheader("📊 Pipeline Statistics")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Generated", start_n)
+        c2.metric("After Filters", len(df))
+        c3.metric("Selected", min(top_n, len(df)))
 
 # =========================
 # TAB 2 — SHAP
