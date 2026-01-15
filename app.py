@@ -460,10 +460,21 @@ with tabs[0]:
                 rows.append([pep, pos, len(pep), ml, cons, final])
 
             df = pd.DataFrame(
-                rows,
-                columns=["Peptide","Start","Length","ML","Conservancy_%","FinalScore"]
-                df.columns = df.columns.str.strip()
-            )
+    rows,
+    columns=[
+        "Peptide",
+        "Start",
+        "Length",
+        "ML",
+        "Conservancy_%",
+        "Antigenicity",
+        "FinalScore",
+        "Cell_Type"
+    ]
+)
+
+# Clean column names (IMPORTANT)
+df.columns = df.columns.str.strip()
 
             df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
