@@ -441,13 +441,65 @@ with tabs[4]:
             ep_list = ["ALL"] + df["Peptide"].tolist()
             selected = st.selectbox("Focus epitope", ep_list)
 
-        show_structure_3d_advanced(
-            pdb_text=pdb_text,
-            df=df,
-            mode=selected,
-            style=style,
-            color_mode=color_mode
+       def show_structure_3d_advanced(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
+
+    import py3Dmol
+    import streamlit.components.v1 as components
+
+    view = py3Dmol.view(width=900, height=600)
+    view.addModel(pdb_text, "pdb")
+
+    # Base style
+    if style == "cartoon":
+        view.setStyle({"cartoon": {"color": "lightgray"}})
+    elif style == "surface":
+        view.setStyle({"surface": {"opacity": 0.9, "color": "lightgray"}})
+    elif style == "stick":
+        view.setStyle({"stick": {}})
+    elif style == "sphere":
+        view.setStyle({"sphere": {}})
+
+    # Normalize score for coloring
+    scores = df["FinalScore"].values
+    mn, mx = scores.min(), scores.max()
+
+    def score_to_color(s):
+        x = (s - mn) / (mx - mn + 1e-6)
+        r = int(255 * x)
+        b = int(255 * (1 - x))
+        return f"rgb({r},0,{b})"
+
+    # Filter single epitope if selected
+    if mode != "ALL":
+        df = df[df["Peptide"] == mode]
+
+    # Color epitopes
+    for _, r in df.iterrows():
+        s = int(r["Start"])
+        e = int(r["Start"] + r["Length"])
+
+        if color_mode == "score":
+            col = score_to_color(r["FinalScore"])
+        elif color_mode == "cell":
+            col = {"T-cell": "red", "B-cell": "blue", "Both": "purple"}.get(r["Cell_Type"], "orange")
+        elif color_mode == "conservancy":
+            if r["Conservancy_%"] > 80:
+                col = "green"
+            elif r["Conservancy_%"] > 50:
+                col = "yellow"
+            else:
+                col = "red"
+        else:
+            col = "orange"
+
+        view.setStyle(
+            {"resi": list(range(s, e + 1))},
+            {style: {"color": col}}
         )
+
+    view.zoomTo()
+    components.html(view._make_html(), height=650, scrolling=False)
+
 
 # =========================
 # TAB 6 — EXPORT
