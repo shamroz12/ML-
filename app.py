@@ -441,8 +441,13 @@ with tabs[4]:
             ep_list = ["ALL"] + df["Peptide"].tolist()
             selected = st.selectbox("Focus epitope", ep_list)
 
-   def show_structure_3d_advanced(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
-
+   def show_structure_3d_advanced(
+    pdb_text=pdb_text,
+    df=st.session_state["df"],
+    mode=selected,
+    style=style,
+    color_mode=color_mode
+)
     import py3Dmol
     import streamlit.components.v1 as components
 
