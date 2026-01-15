@@ -459,6 +459,15 @@ with tabs[0]:
                 final = 0.7*ml + 0.3*(cons/100)
                 rows.append([pep, pos, len(pep), ml, cons, final])
 
+rows = []
+
+for pep, pos, ml in zip(peptides, positions, probs):
+    cons = conservancy_percent(pep, seqs)
+    antig = antigenicity_proxy(pep)
+    final = 0.7*ml + 0.3*(cons/100)
+
+    rows.append([pep, pos, len(pep), ml, cons, antig, final, cell_type_proxy(pep)])
+
 df = pd.DataFrame(
     rows,
     columns=[
@@ -472,6 +481,15 @@ df = pd.DataFrame(
         "Cell_Type"
     ]
 )
+
+df.columns = df.columns.str.strip()
+df = df.sort_values("FinalScore", ascending=False).head(top_n)
+
+st.session_state["df"] = df
+st.session_state["X"] = X
+
+st.success("Pipeline completed.")
+st.dataframe(df)
 
 # Clean column names (IMPORTANT)
 df.columns = df.columns.str.strip()
