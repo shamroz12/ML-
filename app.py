@@ -1,3 +1,4 @@
+
 # =========================
 # Unified Epitope Intelligence & Vaccine Design Platform
 # CLEAN REBUILD — STEP 1 (Stable Core)
@@ -235,21 +236,9 @@ def construct_quality_metrics(peptides):
 
 def show_structure_3d(pdb_text, df):
 
-    st.subheader("🧬 3D Structure Viewer (Auto-Adaptive Performance Mode)")
+    st.subheader("🧬 3D Structure Viewer (Performance Safe Mode)")
 
-    # ====== Analyze structure size ======
-    n_res = estimate_structure_size(pdb_text)
-
-    if n_res > 3000:
-        quality_mode = "LOW"
-    elif n_res > 800:
-        quality_mode = "MEDIUM"
-    else:
-        quality_mode = "HIGH"
-
-    st.info(f"🧠 Structure size: ~{n_res} residues → Auto quality mode: {quality_mode}")
-
-    # ====== UI ======
+    # ============ UI ============
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         style = st.selectbox("Style", ["cartoon", "stick", "sphere", "line", "surface"])
@@ -268,17 +257,11 @@ def show_structure_3d(pdb_text, df):
     with c7:
         bg = st.selectbox("Background", ["white", "black"])
     with c8:
-        force_high = st.checkbox("Force high quality (slow)", value=False)
+        high_quality = st.checkbox("High quality (slow)", value=False)
 
     chain = st.text_input("Chain (leave empty for all):", "")
 
-    # ====== Enforce safety ======
-    if quality_mode == "LOW" and not force_high:
-        style = "cartoon"
-        auto_rotate = False
-        st.warning("⚠ Large structure: Surface & heavy modes disabled automatically")
-
-    # ====== Viewer ======
+    # ============ Viewer ============
     view = py3Dmol.view(width=1000, height=650)
     view.addModel(pdb_text, "pdb")
     view.setBackgroundColor(bg)
@@ -287,41 +270,33 @@ def show_structure_3d(pdb_text, df):
     if chain.strip():
         selector["chain"] = chain.strip()
 
-    # ====== Style ======
+    # ============ Base style ============
     if style == "surface":
-        if quality_mode == "LOW" and not force_high:
-            st.error("❌ Surface disabled for large structures")
-            view.setStyle(selector, {"cartoon": {"opacity": opacity}})
-        else:
-            resolution = 6
-            if quality_mode == "MEDIUM": resolution = 10
-            if quality_mode == "HIGH": resolution = 16
-            if force_high: resolution = 20
-
-            view.setStyle(selector, {
-                "surface": {
-                    "opacity": opacity,
-                    "colorscheme": "whiteCarbon",
-                    "resolution": resolution
-                }
-            })
+        if not high_quality:
+            st.warning("⚠ Surface is heavy. Enable High Quality only if needed.")
+        view.setStyle(selector, {
+            "surface": {
+                "opacity": opacity,
+                "colorscheme": "whiteCarbon",
+                "resolution": 12 if high_quality else 6   # CRITICAL performance control
+            }
+        })
     else:
         view.setStyle(selector, {style: {"opacity": opacity}})
 
-    # ====== Coloring ======
+    # ============ Coloring ============
     scores = df["FinalScore"].values
     cons = df["Conservancy_%"].values
     smin, smax = scores.min(), scores.max()
     cmin, cmax = cons.min(), cons.max()
 
     def fast_color(t):
+        # fast blue → green → red
         t = max(0, min(1, t))
-        if t < 0.33:
-            return f"rgb(0,{int(255*t*3)},255)"
-        elif t < 0.66:
-            return f"rgb({int(255*(t-0.33)*3)},255,0)"
+        if t < 0.5:
+            return f"rgb(0,{int(255*t*2)},255)"
         else:
-            return f"rgb(255,{int(255*(1-t)*3)},0)"
+            return f"rgb({int(255*(t-0.5)*2)},255,0)"
 
     for _, r in df.iterrows():
         pep = r["Peptide"]
@@ -356,16 +331,16 @@ def show_structure_3d(pdb_text, df):
             "surface": {"color": col, "opacity": opacity}
         })
 
-    # ====== Camera ======
+    # ============ Camera ============
     view.zoomTo()
 
-    if auto_rotate and quality_mode != "LOW":
+    if auto_rotate:
         view.spin(True, rot_speed)
 
-    # ====== Render ======
+    # ============ Render ============
     components.html(view._make_html(), height=700, scrolling=False)
 
-    st.success("✅ Auto-adaptive rendering active. Your system is protected.")
+    st.info("💡 Tip: Use 'cartoon' or 'stick' for speed. Use 'surface' only when needed.")
 
 # =========================
 # UI
