@@ -459,7 +459,7 @@ with tabs[0]:
                 final = 0.7*ml + 0.3*(cons/100)
                 rows.append([pep, pos, len(pep), ml, cons, final])
 
-            df = pd.DataFrame(
+df = pd.DataFrame(
     rows,
     columns=[
         "Peptide",
@@ -476,13 +476,14 @@ with tabs[0]:
 # Clean column names (IMPORTANT)
 df.columns = df.columns.str.strip()
 
-            df = df.sort_values("FinalScore", ascending=False).head(top_n)
+# Sort and take top N
+df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
-            st.session_state["df"] = df
-            st.session_state["X"] = X
+st.session_state["df"] = df
+st.session_state["X"] = X
 
-            st.success("Pipeline completed.")
-            st.dataframe(df)
+st.success("Pipeline completed.")
+st.dataframe(df)
 
 # =========================
 # TAB 2 — SHAP
