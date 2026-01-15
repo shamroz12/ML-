@@ -1,5 +1,5 @@
 # =========================
-# Unified Epitope Intelligence & Vaccine Design Platform (FULL INDUSTRIAL VERSION)
+# Unified Epitope Intelligence & Vaccine Design Platform (FULL INDUSTRIAL + VACCINE CAD)
 # =========================
 
 import streamlit as st
@@ -55,6 +55,19 @@ charge = {
 
 aromatic_set = set("FWY")
 aliphatic = set("AVLIM")
+
+SIGNAL_PEPTIDES = {
+    "None": "",
+    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
+    "IL2": "MYRMQLLSCIALSLALVTNS"
+}
+
+ADJUVANTS = {
+    "None": "",
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
+}
+
+PADRE = "AKFVAAWTLKAAA"
 
 # =========================
 # Feature extraction (ML)
@@ -117,6 +130,52 @@ def conservancy_percent(pep, seqs):
     return 100*sum(pep in s for s in seqs)/len(seqs)
 
 # =========================
+# 3D Viewer
+# =========================
+def show_structure_3d(pdb_text, df):
+    view = py3Dmol.view(width=1000, height=700)
+    view.addModel(pdb_text, "pdb")
+
+    style = st.selectbox("Style", ["cartoon","surface","stick","sphere"])
+    color_mode = st.selectbox("Color by", ["score","cell","conservancy","uniform"])
+    focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
+
+    view.setStyle({"cartoon":{"color":"lightgray"}})
+
+    scores=df["FinalScore"].values
+    cons=df["Conservancy_%"].values
+    smin,smax=scores.min(),scores.max()
+    cmin,cmax=cons.min(),cons.max()
+
+    def score_color(x):
+        t=(x-smin)/(smax-smin+1e-6)
+        return f"rgb({int(255*t)},0,{int(255*(1-t))})"
+
+    def cons_color(x):
+        t=(x-cmin)/(cmax-cmin+1e-6)
+        return f"rgb(0,{int(255*t)},0)"
+
+    cell_colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
+
+    for _,r in df.iterrows():
+        pep=r["Peptide"]
+        if focus!="ALL" and pep!=focus:
+            continue
+
+        s=int(r["Start"])
+        e=int(r["Start"]+r["Length"])
+
+        if color_mode=="score": col=score_color(r["FinalScore"])
+        elif color_mode=="conservancy": col=cons_color(r["Conservancy_%"])
+        elif color_mode=="cell": col=cell_colors[r["Cell_Type"]]
+        else: col="orange"
+
+        view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
+
+    view.zoomTo()
+    components.html(view._make_html(), height=750, scrolling=False)
+
+# =========================
 # =========================
 # ADVANCED PEPTIDE CHEMISTRY ENGINE
 # =========================
@@ -164,8 +223,23 @@ def solubility_score(seq):
 def immunogenicity_solubility_tradeoff(final_ml, seq):
     return 0.6*final_ml + 0.4*solubility_score(seq)
 
+def construct_quality_metrics(peptides):
+    if len(peptides) == 0:
+        return None
+    gravs = [gravy(p) for p in peptides]
+    sols  = [solubility_score(p) for p in peptides]
+    aggs  = [aggregation_score(p) for p in peptides]
+    mems  = [membrane_binding_prob(p) for p in peptides]
+    return {
+        "Avg GRAVY": np.mean(gravs),
+        "Avg Solubility": np.mean(sols),
+        "Avg Aggregation": np.mean(aggs),
+        "Avg Membrane Binding": np.mean(mems),
+        "Developability Score": np.mean(sols) - np.mean(aggs)
+    }
+
 # =========================
-# Helical wheel
+# Chemistry plots
 # =========================
 def plot_helical_wheel(seq):
     L=len(seq)
@@ -200,9 +274,7 @@ def plot_hydropathy(seq):
     return fig
 
 # =========================
-# =========================
 # UI
-# =========================
 # =========================
 
 st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
@@ -236,7 +308,6 @@ with tabs[0]:
             cons=conservancy_percent(pep,seqs)
             antig=antigenicity_proxy(pep)
             final=0.6*ml + 0.3*(cons/100) + 0.1*(antig/5)
-
             rows.append([pep,pos,len(pep),ml,cons,antig,final,cell_type_proxy(pep)])
 
         df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","Conservancy_%","Antigenicity","FinalScore","Cell_Type"])
@@ -259,13 +330,83 @@ with tabs[1]:
         st.pyplot(fig)
 
 # =========================
-# VACCINE
+# VACCINE DESIGNER (ADVANCED)
 # =========================
 with tabs[2]:
     if "df" in st.session_state:
-        df=st.session_state["df"]
-        construct="GPGPG".join(df["Peptide"].tolist())
+        df = st.session_state["df"]
+
+        st.title("🧬 Intelligent Multi-Epitope Vaccine Designer")
+
+        colA, colB, colC = st.columns(3)
+
+        with colA:
+            sig = st.selectbox("Signal peptide", list(SIGNAL_PEPTIDES.keys()))
+            adj = st.selectbox("Adjuvant", list(ADJUVANTS.keys()))
+            linker = st.selectbox("Linker", ["GPGPG", "AAY", "EAAAK"])
+
+        with colB:
+            n_epi = st.slider("Number of epitopes", 3, min(20, len(df)), min(8, len(df)))
+            cell_filter = st.selectbox("Epitope type", ["All", "T-cell", "B-cell", "Both"])
+
+        with colC:
+            ordering = st.selectbox("Order epitopes by", ["FinalScore", "Conservancy_%", "Start"])
+            add_padre = st.checkbox("Add PADRE helper epitope", value=True)
+            filter_bad = st.checkbox("Remove toxic / aggregating peptides", value=True)
+
+        work = df.copy()
+        if cell_filter != "All":
+            work = work[work["Cell_Type"] == cell_filter]
+
+        if filter_bad:
+            work = work[work["Peptide"].apply(lambda p: aggregation_score(p) < 1.5 and toxicity_score(p) < 1)]
+
+        work = work.sort_values(ordering, ascending=False)
+        selected = work.head(n_epi)["Peptide"].tolist()
+
+        blocks = []
+        if sig != "None":
+            blocks.append(("Signal", SIGNAL_PEPTIDES[sig]))
+        if adj != "None":
+            blocks.append(("Adjuvant", ADJUVANTS[adj]))
+        for p in selected:
+            blocks.append(("Epitope", p))
+        if add_padre:
+            blocks.append(("PADRE", PADRE))
+
+        seq_parts = [b[1] for b in blocks]
+        construct = linker.join(seq_parts)
+
+        st.subheader("🧱 Vaccine Architecture")
+        cols = st.columns(len(blocks))
+        for (label, seq), c in zip(blocks, cols):
+            color = "#4CAF50" if label=="Epitope" else "#FF9800" if label=="Adjuvant" else "#03A9F4" if label=="Signal" else "#9C27B0"
+            c.markdown(
+                f"""
+                <div style="padding:10px;border-radius:10px;background:{color};color:white;text-align:center">
+                <b>{label}</b><br>{len(seq)} aa
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        st.subheader("🧬 Final Vaccine Construct")
         st.code(construct)
+
+        st.subheader("📊 Construct Quality Metrics")
+        qm = construct_quality_metrics(selected)
+        if qm:
+            c1,c2,c3,c4,c5 = st.columns(5)
+            c1.metric("Avg GRAVY", f"{qm['Avg GRAVY']:.2f}")
+            c2.metric("Avg Solubility", f"{qm['Avg Solubility']:.2f}")
+            c3.metric("Avg Aggregation", f"{qm['Avg Aggregation']:.2f}")
+            c4.metric("Avg Membrane Bind", f"{qm['Avg Membrane Binding']:.2f}")
+            c5.metric("Developability", f"{qm['Developability Score']:.2f}")
+
+        st.subheader("⬇️ Export")
+        fasta = f">Multi_epitope_vaccine\n{construct}"
+        st.download_button("Download FASTA", fasta, "vaccine.fasta")
+        st.download_button("Download Sequence TXT", construct, "vaccine.txt")
 
 # =========================
 # LANDSCAPE
@@ -277,6 +418,14 @@ with tabs[3]:
         ax.scatter(df["Start"],df["FinalScore"],c=df["FinalScore"],cmap="viridis",s=80)
         ax.set_title("Immunogenic Landscape")
         st.pyplot(fig)
+
+# =========================
+# 3D
+# =========================
+with tabs[4]:
+    pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
+    if "df" in st.session_state and pdb_file:
+        show_structure_3d(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
 # =========================
 # CHEMISTRY
