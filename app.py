@@ -441,7 +441,7 @@ with tabs[4]:
             ep_list = ["ALL"] + df["Peptide"].tolist()
             selected = st.selectbox("Focus epitope", ep_list)
 
-       def show_structure_3d_advanced(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
+    def show_structure_3d_advanced(pdb_text, df, mode="ALL", style="cartoon", color_mode="score"):
 
     import py3Dmol
     import streamlit.components.v1 as components
@@ -459,7 +459,6 @@ with tabs[4]:
     elif style == "sphere":
         view.setStyle({"sphere": {}})
 
-    # Normalize score for coloring
     scores = df["FinalScore"].values
     mn, mx = scores.min(), scores.max()
 
@@ -469,11 +468,9 @@ with tabs[4]:
         b = int(255 * (1 - x))
         return f"rgb({r},0,{b})"
 
-    # Filter single epitope if selected
     if mode != "ALL":
         df = df[df["Peptide"] == mode]
 
-    # Color epitopes
     for _, r in df.iterrows():
         s = int(r["Start"])
         e = int(r["Start"] + r["Length"])
@@ -499,7 +496,6 @@ with tabs[4]:
 
     view.zoomTo()
     components.html(view._make_html(), height=650, scrolling=False)
-
 
 # =========================
 # TAB 6 — EXPORT
