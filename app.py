@@ -423,86 +423,81 @@ tabs = st.tabs([
 # TAB 1 — PIPELINE
 # =========================
 with tabs[0]:
-    st.header("🔬 Epitope Mining Pipeline")
+    st.header("🧬 Epitope Prediction Pipeline")
 
-    fasta_input = st.text_area("Paste FASTA sequences:")
-    min_len = st.slider("Min length", 8, 15, 9)
-    max_len = st.slider("Max length", 9, 25, 15)
-    top_n = st.selectbox("Top N epitopes", [10,20,50,100])
+    fasta_input = st.text_area("Paste FASTA sequences (first = reference):")
+    min_len = st.slider("Min peptide length", 8, 15, 9)
+    max_len = st.slider("Max peptide length", 9, 25, 15)
+    top_n = st.selectbox("Top N epitopes", [10, 20, 50, 100])
 
     if st.button("Run Pipeline"):
-        seqs = read_fasta_multi(fasta_input)
 
+        # ---- Read sequences ----
+        seqs = read_fasta_multi(fasta_input)
         if len(seqs) == 0:
             st.error("Please paste FASTA sequences.")
-        else:
-            main = seqs[0]
+            st.stop()
 
-            peptides = []
-            positions = []
+        main = seqs[0]
 
-            for L in range(min_len, max_len+1):
-                for i in range(len(main)-L+1):
-                    peptides.append(main[i:i+L])
-                    positions.append(i+1)
+        # ---- Generate peptides ----
+        peptides = []
+        positions = []
 
-            X = pd.DataFrame(
-                [extract_features(p) for p in peptides],
-                columns=feature_columns
-            )
+        for L in range(min_len, max_len + 1):
+            for i in range(len(main) - L + 1):
+                pep = main[i:i+L]
+                peptides.append(pep)
+                positions.append(i + 1)
 
-            probs = model.predict_proba(X)[:,1]
+        # ---- Feature extraction ----
+        X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
 
-            rows = []
-            for pep, pos, ml in zip(peptides, positions, probs):
-                cons = conservancy_percent(pep, seqs)
-                final = 0.7*ml + 0.3*(cons/100)
-                rows.append([pep, pos, len(pep), ml, cons, final])
+        # ---- ML prediction ----
+        probs = model.predict_proba(X)[:, 1]
 
-rows = []
+        # ---- Build result table ----
+        rows = []
 
-for pep, pos, ml in zip(peptides, positions, probs):
-    cons = conservancy_percent(pep, seqs)
-    antig = antigenicity_proxy(pep)
-    final = 0.7*ml + 0.3*(cons/100)
+        for pep, pos, ml in zip(peptides, positions, probs):
+            cons = conservancy_percent(pep, seqs)
+            antig = antigenicity_proxy(pep)
+            final = 0.6 * ml + 0.3 * (cons / 100) + 0.1 * (antig / 5)
 
-    rows.append([pep, pos, len(pep), ml, cons, antig, final, cell_type_proxy(pep)])
+            rows.append([
+                pep,
+                pos,
+                len(pep),
+                ml,
+                cons,
+                antig,
+                final,
+                cell_type_proxy(pep)
+            ])
 
-df = pd.DataFrame(
-    rows,
-    columns=[
-        "Peptide",
-        "Start",
-        "Length",
-        "ML",
-        "Conservancy_%",
-        "Antigenicity",
-        "FinalScore",
-        "Cell_Type"
-    ]
-)
+        df = pd.DataFrame(
+            rows,
+            columns=[
+                "Peptide",
+                "Start",
+                "Length",
+                "ML",
+                "Conservancy_%",
+                "Antigenicity",
+                "FinalScore",
+                "Cell_Type"
+            ]
+        )
 
-df.columns = df.columns.str.strip()
-df = df.sort_values("FinalScore", ascending=False).head(top_n)
+        df.columns = df.columns.str.strip()
+        df = df.sort_values("FinalScore", ascending=False).head(top_n)
 
-st.session_state["df"] = df
-st.session_state["X"] = X
+        # ---- Save results ----
+        st.session_state["df"] = df
+        st.session_state["X"] = X
 
-st.success("Pipeline completed.")
-st.dataframe(df)
-
-# Clean column names (IMPORTANT)
-df.columns = df.columns.str.strip()
-
-# Sort and take top N
-df = df.sort_values("FinalScore", ascending=False).head(top_n)
-
-st.session_state["df"] = df
-st.session_state["X"] = X
-
-st.success("Pipeline completed.")
-st.dataframe(df)
-
+        st.success("Pipeline completed successfully.")
+        st.dataframe(df)
 
 # =========================
 # TAB 2 — SHAP
