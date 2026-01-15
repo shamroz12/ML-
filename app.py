@@ -1,5 +1,5 @@
 # =========================
-# Unified Epitope Intelligence & Vaccine Design Platform
+# Unified Epitope Intelligence & Vaccine Design Platform (STREAMLIT CLOUD SAFE)
 # =========================
 
 import streamlit as st
@@ -12,9 +12,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 import shap
 import py3Dmol
 import streamlit.components.v1 as components
-from rdkit import Chem
-from rdkit.Chem import Draw
-from PIL import Image
+from math import cos, sin, pi
 
 # =========================
 # Page config
@@ -49,8 +47,16 @@ hydro = {
 "V":4.2,"W":-0.9,"Y":-1.3
 }
 
-SIGNAL_PEPTIDES = {"None": "", "tPA": "MDAMKRGLCCVLLLCGAVFVS", "IL2": "MYRMQLLSCIALSLALVTNS"}
-ADJUVANTS = {"None": "", "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"}
+SIGNAL_PEPTIDES = {
+    "None": "",
+    "tPA": "MDAMKRGLCCVLLLCGAVFVS",
+    "IL2": "MYRMQLLSCIALSLALVTNS"
+}
+
+ADJUVANTS = {
+    "None": "",
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
+}
 
 # =========================
 # Feature extraction
@@ -70,8 +76,8 @@ def dipeptide_composition(seq):
 
 def physchem(seq):
     L=len(seq)
-    mw=sum(aa_weights.get(a,0) for a in seq)
-    hydv=sum(hydro.get(a,0) for a in seq)/L
+    mw=sum(aa_weights[a] for a in seq)
+    hydv=sum(hydro[a] for a in seq)/L
     aromatic=sum(a in "FWY" for a in seq)/L
     return mw, hydv, aromatic
 
@@ -82,7 +88,7 @@ def extract_features(seq):
     return aa + dp + [len(seq), mw, hydv, aromatic]
 
 # =========================
-# Biology proxies
+# Proxies
 # =========================
 def antigenicity_proxy(seq):
     return sum(hydro[a] for a in seq)/len(seq)
@@ -107,80 +113,67 @@ def read_fasta_multi(text):
     return [s.upper() for s in seqs]
 
 # =========================
-# Conservancy & robustness
+# Conservancy
 # =========================
 def conservancy_percent(pep, seqs):
     return 100*sum(pep in s for s in seqs)/len(seqs)
-
-def robustness_score(pep, seqs):
-    L=len(pep); hits=0
-    for i in range(L):
-        for a in amino_acids:
-            if a!=pep[i]:
-                mut=pep[:i]+a+pep[i+1:]
-                if any(mut in s for s in seqs): hits+=1
-    return hits/(L*19)
-
-def population_coverage_proxy(seq):
-    L=len(seq)
-    if 9<=L<=11: return "Broad",0.9
-    if L>=8: return "Medium",0.6
-    return "Narrow",0.3
-
-# =========================
-# Chemistry
-# =========================
-def peptide_to_mol(seq):
-    try:
-        return Chem.MolFromSequence(seq)
-    except:
-        return None
-
-def peptide_physchem(seq):
-    mw, hyd, aromatic = physchem(seq)
-    charge = seq.count("K") + seq.count("R") - seq.count("D") - seq.count("E")
-    return {"Length":len(seq),"Molecular Weight":mw,"Hydrophobicity":hyd,"Aromatic Fraction":aromatic,"Net Charge":charge}
-
-def aa_composition_dict(seq):
-    L=len(seq)
-    return {a:seq.count(a)/L for a in amino_acids}
 
 # =========================
 # 3D Viewer
 # =========================
 def show_structure_3d(pdb_text, df):
-    view = py3Dmol.view(width=900, height=600)
+    view = py3Dmol.view(width=1000, height=700)
     view.addModel(pdb_text, "pdb")
+
+    style = st.selectbox("Style", ["cartoon","surface","stick","sphere"])
+    color_mode = st.selectbox("Color by", ["score","cell","conservancy","uniform"])
+    focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
+
     view.setStyle({"cartoon":{"color":"lightgray"}})
 
     scores=df["FinalScore"].values
-    mn,mx=scores.min(),scores.max()
+    cons=df["Conservancy_%"].values
+    smin,smax=scores.min(),scores.max()
+    cmin,cmax=cons.min(),cons.max()
+
+    def score_color(x):
+        t=(x-smin)/(smax-smin+1e-6)
+        return f"rgb({int(255*t)},0,{int(255*(1-t))})"
+
+    def cons_color(x):
+        t=(x-cmin)/(cmax-cmin+1e-6)
+        return f"rgb(0,{int(255*t)},0)"
+
+    cell_colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
 
     for _,r in df.iterrows():
-        s=int(r["Start"]); e=int(r["Start"]+r["Length"])
-        x=(r["FinalScore"]-mn)/(mx-mn+1e-6)
-        col=f"rgb({int(255*x)},0,{int(255*(1-x))})"
+        pep=r["Peptide"]
+        if focus!="ALL" and pep!=focus: continue
+
+        s=int(r["Start"])
+        e=int(r["Start"]+r["Length"])
+
+        if color_mode=="score": col=score_color(r["FinalScore"])
+        elif color_mode=="conservancy": col=cons_color(r["Conservancy_%"])
+        elif color_mode=="cell": col=cell_colors[r["Cell_Type"]]
+        else: col="orange"
+
         view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
 
     view.zoomTo()
-    components.html(view._make_html(), height=650, scrolling=False)
+    components.html(view._make_html(), height=750, scrolling=False)
 
 # =========================
-# Vaccine construct plot
+# Chemistry plots
 # =========================
-def draw_vaccine_construct_figure(df, linker="GPGPG", signal="", adjuvant=""):
-    fig, ax = plt.subplots(figsize=(18,4), dpi=300)
-    colors={"T-cell":"#d62728","B-cell":"#1f77b4","Both":"#9467bd"}
-    x=0; y=0.5; h=0.3
-
-    for _,r in df.iterrows():
-        L=len(r["Peptide"])
-        ax.add_patch(plt.Rectangle((x,y),L,h,color=colors[r["Cell_Type"]]))
-        ax.text(x+L/2,y+h/2,r["Peptide"],ha="center",va="center",rotation=90,fontsize=7,color="white")
-        x+=L+len(linker)
-
-    ax.set_xlim(0,x); ax.set_ylim(0,1.2); ax.set_yticks([])
-    ax.set_title("Multi-Epitope Vaccine Construct Architecture")
+def plot_helical_wheel(seq):
+    angles = [i*100*pi/180 for i in range(len(seq))]
+    fig, ax = plt.subplots(figsize=(4,4))
+    for i,a in enumerate(angles):
+        x,y = cos(a), sin(a)
+        ax.text(x,y,seq[i], ha="center", va="center")
+    ax.set_title("Helical Wheel Projection")
+    ax.axis("off")
     return fig
 
 # =========================
@@ -191,7 +184,7 @@ st.title("🧬 Unified Epitope Intelligence & Vaccine Design Platform")
 tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Chemistry","Export","Report"])
 
 # =========================
-# PIPELINE
+# TAB 1 — PIPELINE
 # =========================
 with tabs[0]:
     fasta_input = st.text_area("Paste FASTA:")
@@ -210,18 +203,17 @@ with tabs[0]:
                 peptides.append(pep); positions.append(i+1)
 
         X = pd.DataFrame([extract_features(p) for p in peptides], columns=feature_columns)
-        preds = model.predict_proba(X)[:,1]
+        probs = model.predict_proba(X)[:,1]
 
         rows=[]
-        for pep,pos,ml in zip(peptides,positions,preds):
+        for pep,pos,ml in zip(peptides,positions,probs):
             cons=conservancy_percent(pep,seqs)
-            rob=robustness_score(pep,seqs)
-            popc,pops=population_coverage_proxy(pep)
             antig=antigenicity_proxy(pep)
-            final=0.4*ml+0.3*(cons/100)+0.2*rob+0.1*pops
-            rows.append([pep,pos,len(pep),ml,cons,rob,final,cell_type_proxy(pep)])
+            final=0.6*ml + 0.3*(cons/100) + 0.1*(antig/5)
 
-        df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","Conservancy_%","Robustness","FinalScore","Cell_Type"])
+            rows.append([pep,pos,len(pep),ml,cons,antig,final,cell_type_proxy(pep)])
+
+        df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","Conservancy_%","Antigenicity","FinalScore","Cell_Type"])
         df=df.sort_values("FinalScore",ascending=False).head(top_n)
 
         st.session_state["df"]=df
@@ -229,74 +221,71 @@ with tabs[0]:
         st.dataframe(df)
 
 # =========================
-# SHAP
+# TAB 2 — SHAP
 # =========================
 with tabs[1]:
-    if "X" in st.session_state:
+    if "df" in st.session_state:
+        X=st.session_state["X"]
         explainer=shap.TreeExplainer(model)
-        shap_vals=explainer.shap_values(st.session_state["X"].iloc[:5])
-        fig,_=plt.subplots()
-        shap.summary_plot(shap_vals, st.session_state["X"].iloc[:5], show=False)
+        shap_vals=explainer.shap_values(X.iloc[:20])
+        fig,_=plt.subplots(figsize=(10,6))
+        shap.summary_plot(shap_vals, X.iloc[:20], show=False)
         st.pyplot(fig)
 
 # =========================
-# VACCINE
+# TAB 3 — VACCINE
 # =========================
 with tabs[2]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        fig=draw_vaccine_construct_figure(df)
-        st.pyplot(fig)
+        sig=st.selectbox("Signal",list(SIGNAL_PEPTIDES.keys()))
+        adj=st.selectbox("Adjuvant",list(ADJUVANTS.keys()))
+        linker="GPGPG"
+        construct = SIGNAL_PEPTIDES[sig] + ADJUVANTS[adj] + linker.join(df["Peptide"].tolist())
+        st.code(construct)
 
 # =========================
-# LANDSCAPE
+# TAB 4 — LANDSCAPE
 # =========================
 with tabs[3]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        fig,ax=plt.subplots()
-        ax.scatter(df["Start"],df["FinalScore"])
+        fig,ax=plt.subplots(figsize=(12,4))
+        ax.scatter(df["Start"],df["FinalScore"],c=df["FinalScore"],cmap="viridis",s=80)
+        ax.set_title("Immunogenic Landscape")
         st.pyplot(fig)
 
 # =========================
-# 3D
+# TAB 5 — 3D
 # =========================
 with tabs[4]:
     pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
-    if pdb_file and "df" in st.session_state:
+    if "df" in st.session_state and pdb_file:
         show_structure_3d(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
 # =========================
-# CHEMISTRY
+# TAB 6 — CHEMISTRY
 # =========================
 with tabs[5]:
     if "df" in st.session_state:
-        df=st.session_state["df"]
-        pep = st.selectbox("Select peptide", df["Peptide"])
-        mol = peptide_to_mol(pep)
-        if mol:
-            img = Draw.MolToImage(mol, size=(500,300))
-            st.image(img)
+        pep = st.selectbox("Select peptide", st.session_state["df"]["Peptide"])
+        fig = plot_helical_wheel(pep)
+        st.pyplot(fig)
 
 # =========================
-# EXPORT
-# =========================
-with tabs[6]:
-    if "df" in st.session_state:
-        df=st.session_state["df"]
-        csv=df.to_csv(index=False).encode()
-        st.download_button("Download CSV", csv, "epitopes.csv")
-
-# =========================
-# REPORT
+# TAB 7 — EXPORT + PDF
 # =========================
 with tabs[7]:
     if "df" in st.session_state:
+        df = st.session_state["df"]
+        csv=df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download CSV",csv,"epitopes.csv")
+
         if st.button("Generate PDF"):
             fig,ax=plt.subplots()
-            df=st.session_state["df"]
             ax.scatter(df["Start"],df["FinalScore"])
             with PdfPages("Report.pdf") as pdf:
                 pdf.savefig(fig)
+
             with open("Report.pdf","rb") as f:
-                st.download_button("Download Report", f, "Epitope_Report.pdf")
+                st.download_button("⬇️ Download PDF", f, "Epitope_Report.pdf")
