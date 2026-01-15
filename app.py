@@ -232,71 +232,85 @@ def construct_quality_metrics(peptides):
         "Avg Membrane Binding": float(np.mean(mems)),
         "Developability Score": float(np.mean(sols) - np.mean(aggs))
     }
-    
+
 # =========================
 # PROFESSIONAL 3D VIEWER — HQ, STABLE CAMERA, MULTI-SPECTRAL COLORS
 # =========================
+
 def show_structure_3d(pdb_text, df):
 
-    st.subheader("🧬 Advanced 3D Structure Viewer")
+    st.subheader("🧬 Advanced 3D Epitope Structure Viewer")
 
     # ---------------- UI ----------------
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        style = st.selectbox("Style", ["cartoon", "surface", "stick"])
+        style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere", "line"])
     with c2:
-        color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
+        color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "Electrostatic", "uniform"])
     with c3:
         focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
     with c4:
         auto_rotate = st.checkbox("Auto rotate", value=False)
 
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     with c5:
         opacity = st.slider("Transparency", 0.3, 1.0, 1.0)
     with c6:
         rot_speed = st.slider("Rotation speed", 0.1, 1.0, 0.4)
     with c7:
-        bg = st.selectbox("Background", ["white", "black"])
+        bg = st.selectbox("Background", ["white", "black", "gray"])
+    with c8:
+        take_shot = st.button("📸 Screenshot")
 
+    # ---------------- Chain Selector ----------------
+    chain = st.text_input("Chain selector (e.g. A or B). Leave empty for all chains:", "")
+
+    # ---------------- Zoom Buttons ----------------
     z1, z2, z3, z4 = st.columns(4)
     zoom_in = z1.button("🔍 Zoom in")
     zoom_out = z2.button("🔎 Zoom out")
-    reset_view = z3.button("🔁 Reset view")
+    reset_view = z3.button("🔁 Reset zoom")
     center_view = z4.button("🎯 Center")
 
-    # ---------------- ZOOM STATE ----------------
     if "zoom_factor" not in st.session_state:
         st.session_state.zoom_factor = 1.0
 
     if zoom_in:
-        st.session_state.zoom_factor *= 1.2
+        st.session_state.zoom_factor *= 1.15
     if zoom_out:
-        st.session_state.zoom_factor /= 1.2
+        st.session_state.zoom_factor /= 1.15
     if reset_view:
         st.session_state.zoom_factor = 1.0
 
-    # ---------------- VIEWER ----------------
-    view = py3Dmol.view(width=1400, height=900)
+    # ---------------- Viewer ----------------
+    view = py3Dmol.view(width=1600, height=900)
     view.addModel(pdb_text, "pdb")
-
     view.setBackgroundColor(bg)
 
-    # ---------------- BASE STYLE ----------------
-    view.setStyle({}, {"cartoon": {"color": "lightgray", "opacity": opacity}})
+    # ---------------- Selection ----------------
+    selector = {}
+    if chain.strip():
+        selector["chain"] = chain.strip()
 
-    if style == "surface":
-        view.setStyle({}, {"surface": {"opacity": opacity, "color": "lightgray"}})
+    # ---------------- Base Style ----------------
+    if style == "cartoon":
+        view.setStyle(selector, {"cartoon": {"color": "lightgray", "opacity": opacity}})
+    elif style == "surface":
+        view.setStyle(selector, {"surface": {"opacity": opacity}})
     elif style == "stick":
-        view.setStyle({}, {"stick": {"radius": 0.3}})
+        view.setStyle(selector, {"stick": {"radius": 0.3}})
+    elif style == "sphere":
+        view.setStyle(selector, {"sphere": {"scale": 0.3}})
+    elif style == "line":
+        view.setStyle(selector, {"line": {}})
 
-    # ---------------- COLOR MAP ----------------
+    # ---------------- Color Scaling ----------------
     scores = df["FinalScore"].values
     cons = df["Conservancy_%"].values
     smin, smax = scores.min(), scores.max()
     cmin, cmax = cons.min(), cons.max()
 
-    def heat_color(t):
+    def spectral_color(t):
         t = max(0, min(1, t))
         colors = [
             (0,0,128),(0,0,255),(0,128,255),(0,255,255),
@@ -315,7 +329,7 @@ def show_structure_3d(pdb_text, df):
         b = int(c1[2] + (c2[2]-c1[2])*f)
         return f"rgb({r},{g},{b})"
 
-    # ---------------- DRAW EPITOPES ----------------
+    # ---------------- Epitope Coloring ----------------
     for _, r in df.iterrows():
         pep = r["Peptide"]
         if focus != "ALL" and pep != focus:
@@ -326,16 +340,34 @@ def show_structure_3d(pdb_text, df):
 
         if color_mode == "FinalScore":
             t = (r["FinalScore"] - smin) / (smax - smin + 1e-6)
+            col = spectral_color(t)
+
         elif color_mode == "Conservancy_%":
             t = (r["Conservancy_%"] - cmin) / (cmax - cmin + 1e-6)
-        else:
-            t = 0.5
+            col = spectral_color(t)
 
-        col = heat_color(t)
+        elif color_mode == "Electrostatic":
+            # basic charge coloring: + = blue, - = red
+            pepseq = r["Peptide"]
+            charge_score = sum(1 if a in "KR" else -1 if a in "DE" else 0 for a in pepseq) / len(pepseq)
+            t = (charge_score + 1) / 2
+            col = spectral_color(1 - t)
+
+        else:
+            col = "orange"
+
+        sel = {"resi": list(range(start, end+1))}
+        if chain.strip():
+            sel["chain"] = chain.strip()
 
         view.addStyle(
-            {"resi": list(range(start, end+1))},
-            {"cartoon": {"color": col, "opacity": 1.0}, "stick": {"color": col}}
+            sel,
+            {
+                "cartoon": {"color": col, "opacity": 1.0},
+                "stick": {"color": col},
+                "sphere": {"color": col},
+                "surface": {"color": col, "opacity": opacity}
+            }
         )
 
         mid = int((start + end) / 2)
@@ -345,8 +377,8 @@ def show_structure_3d(pdb_text, df):
             {"resi": mid}
         )
 
-    # ---------------- CAMERA FIX ----------------
-    view.zoomTo()                     # <<< CRITICAL
+    # ---------------- Camera ----------------
+    view.zoomTo()
     view.zoom(st.session_state.zoom_factor)
 
     if center_view:
@@ -355,8 +387,18 @@ def show_structure_3d(pdb_text, df):
     if auto_rotate:
         view.spin(True, rot_speed)
 
-    # ---------------- RENDER ----------------
-    components.html(view._make_html(), height=920, scrolling=False)
+    if take_shot:
+        view.png()
+
+    # ---------------- Render ----------------
+    components.html(view._make_html(), height=950, scrolling=False)
+
+    # ---------------- Color Legend ----------------
+    st.markdown("### 🎨 Color Legend")
+    st.image(
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Color_scale_spectrum.svg/512px-Color_scale_spectrum.svg.png",
+        caption="Blue → Low | Red → High"
+    )
 
 # =========================
 # UI
