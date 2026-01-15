@@ -342,6 +342,64 @@ def show_structure_3d(pdb_text, df):
 
     st.info("💡 Tip: Use 'cartoon' or 'stick' for speed. Use 'surface' only when needed.")
 
+def plot_immunogenic_landscape(df, color_by="FinalScore"):
+    import numpy as np
+
+    x = df["Start"].values
+    y = df[color_by].values
+
+    # Sort by position
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+
+    # Smooth curve (simple moving average)
+    window = max(3, len(y)//10)
+    y_smooth = np.convolve(y, np.ones(window)/window, mode="same")
+
+    fig, ax = plt.subplots(figsize=(9, 3.8), dpi=200)
+
+    # Scatter with color map
+    sc = ax.scatter(
+        x, y,
+        c=y,
+        cmap="viridis",
+        s=70,
+        edgecolors="black",
+        linewidths=0.3,
+        alpha=0.85
+    )
+
+    # Smoothed trend line
+    ax.plot(x, y_smooth, color="red", linewidth=2, label="Smoothed trend")
+
+    # Best epitope marker
+    best_idx = np.argmax(y)
+    ax.scatter(
+        x[best_idx], y[best_idx],
+        s=180,
+        color="gold",
+        edgecolors="black",
+        zorder=5,
+        label="Best epitope"
+    )
+
+    # Mean line
+    mean_val = np.mean(y)
+    ax.axhline(mean_val, linestyle="--", color="gray", linewidth=1, label="Mean")
+
+    ax.set_title("Immunogenic Landscape Across Protein", fontsize=12)
+    ax.set_xlabel("Position in protein")
+    ax.set_ylabel(color_by)
+
+    cbar = plt.colorbar(sc, ax=ax)
+    cbar.set_label(color_by)
+
+    ax.legend()
+    ax.grid(alpha=0.2)
+
+    return fig
+
 # =========================
 # UI
 # =========================
@@ -536,16 +594,23 @@ with tabs[2]:
         st.download_button("Download TXT", construct, "vaccine.txt")
 
 # =========================
-# TAB 4 — LANDSCAPE
+# LANDSCAPE (ADVANCED)
 # =========================
 with tabs[3]:
-    st.header("📊 Immunogenic Landscape")
     if "df" in st.session_state:
         df = st.session_state["df"]
-        fig, ax = plt.subplots(figsize=(8,3), dpi=200)
-        ax.scatter(df["Start"], df["FinalScore"], s=60)
-        ax.set_title("Immunogenic Landscape")
+
+        st.subheader("📊 Immunogenic Landscape Analysis")
+
+        color_by = st.selectbox(
+            "Color / plot by",
+            ["FinalScore", "Conservancy_%", "Antigenicity"]
+        )
+
+        fig = plot_immunogenic_landscape(df, color_by=color_by)
         st.pyplot(fig, use_container_width=False)
+
+        st.info("🔍 This plot shows immunogenic hotspots, clustering, and overall coverage along the protein.")
 
 # =========================
 # TAB 5 — 3D
