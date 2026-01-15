@@ -60,6 +60,35 @@ hydro = {
 }
 
 # =========================
+# Proxies (REQUIRED BY PIPELINE)
+# =========================
+
+def antigenicity_proxy(seq):
+    """
+    Simple hydrophobicity-based proxy for antigenicity.
+    """
+    if len(seq) == 0:
+        return 0.0
+    return sum(hydro[a] for a in seq) / len(seq)
+
+
+def cell_type_proxy(seq):
+    """
+    Very rough rule-based classifier for epitope type.
+    """
+    L = len(seq)
+    if L == 0:
+        return "Both"
+
+    hydv = sum(hydro[a] for a in seq) / L
+
+    if 8 <= L <= 11 and hydv > 1.0:
+        return "T-cell"
+    if hydv < 0:
+        return "B-cell"
+    return "Both"
+
+# =========================
 # BASIC UTILITIES
 # =========================
 def read_fasta_multi(text):
