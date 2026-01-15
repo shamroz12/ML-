@@ -390,7 +390,6 @@ def show_structure_3d(pdb_text, df):
 
     # ---------------- Render ----------------
     components.html(view._make_html(), height=950, scrolling=False)
-    
     )
 
 # =========================
