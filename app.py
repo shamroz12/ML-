@@ -242,7 +242,8 @@ def plot_hydropathy(seq):
     ax.set_ylabel("Hydrophobicity")
 
     return fig
-    def amphipathic_score(seq):
+    
+def amphipathic_score(seq):
     """
     Quantify amphipathicity: hydrophobic moment / average hydrophobicity
     """
