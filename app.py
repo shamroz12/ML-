@@ -225,6 +225,99 @@ def plot_hydropathy(seq):
     ax.set_ylabel("Hydrophobicity")
 
     return fig
+
+# =========================
+# VACCINE INTELLIGENCE ENGINE (SAFE MODE)
+# =========================
+
+def epitope_developability_score(seq, ml_score):
+    """
+    Higher is better.
+    Combines immunogenicity with developability.
+    """
+    try:
+        sol = solubility_score(seq)
+        agg = aggregation_score(seq)
+        tox = toxicity_score(seq)
+        stab = protease_stability(seq)
+    except:
+        return ml_score
+
+    # Penalize bad properties
+    penalty = 0.5*agg + 0.7*tox + 0.3*(1-stab)
+
+    score = (
+        0.6 * ml_score +
+        0.4 * sol -
+        penalty
+    )
+    return float(score)
+
+
+def junction_penalty(seq1, seq2):
+    """
+    Penalize bad junctions between epitopes.
+    """
+    bad_pairs = ["KK", "RR", "KR", "RK", "FF", "WW", "YY"]
+    junction = seq1[-1] + seq2[0]
+
+    if junction in bad_pairs:
+        return 1.0
+
+    # Penalize hydrophobic clustering
+    if hydro[seq1[-1]] > 1 and hydro[seq2[0]] > 1:
+        return 0.5
+
+    return 0.0
+
+
+def optimize_epitope_order_greedy(peptides):
+    """
+    Fast greedy ordering to minimize junction penalties.
+    """
+    if len(peptides) <= 2:
+        return peptides[:]
+
+    remaining = peptides[:]
+    ordered = [remaining.pop(0)]
+
+    while remaining:
+        best_i = 0
+        best_penalty = 1e9
+
+        for i, cand in enumerate(remaining):
+            p = junction_penalty(ordered[-1], cand)
+            if p < best_penalty:
+                best_penalty = p
+                best_i = i
+
+        ordered.append(remaining.pop(best_i))
+
+    return ordered
+
+
+def construct_quality_metrics(peptides):
+    """
+    Whole construct developability analysis.
+    """
+    if peptides is None or len(peptides) == 0:
+        return None
+
+    gravs = [gravy(p) for p in peptides]
+    sols  = [solubility_score(p) for p in peptides]
+    aggs  = [aggregation_score(p) for p in peptides]
+    mems  = [membrane_binding_prob(p) for p in peptides]
+    toxs  = [toxicity_score(p) for p in peptides]
+
+    return {
+        "Avg GRAVY": float(np.mean(gravs)),
+        "Avg Solubility": float(np.mean(sols)),
+        "Avg Aggregation": float(np.mean(aggs)),
+        "Avg Membrane Binding": float(np.mean(mems)),
+        "Avg Toxicity": float(np.mean(toxs)),
+        "Developability Score": float(np.mean(sols) - np.mean(aggs) - 0.5*np.mean(toxs))
+    }
+
 # =========================
 # VACCINE DESIGN CONSTANTS
 # =========================
