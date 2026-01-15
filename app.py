@@ -234,11 +234,11 @@ def construct_quality_metrics(peptides):
     }
     
 # =========================
-# ULTRA ADVANCED 3D VIEWER WITH CAMERA CONTROLS
+# PROFESSIONAL 3D VIEWER — HQ, STABLE CAMERA, MULTI-SPECTRAL COLORS
 # =========================
 def show_structure_3d(pdb_text, df):
 
-    # ---- UI CONTROLS ----
+    # ---------------- UI CONTROLS ----------------
     c1, c2, c3, c4, c5, c6 = st.columns(6)
 
     with c1:
@@ -246,58 +246,93 @@ def show_structure_3d(pdb_text, df):
     with c2:
         color_mode = st.selectbox("Color by", ["FinalScore", "Conservancy_%", "uniform"])
     with c3:
-        focus = st.selectbox("Focus", ["ALL"] + df["Peptide"].tolist())
+        focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
     with c4:
-        auto_rotate = st.checkbox("Auto rotate", value=True)
+        auto_rotate = st.checkbox("Auto rotate", value=False)
     with c5:
-        rot_speed = st.slider("Rotation speed", 0.1, 2.0, 0.6)
+        rot_speed = st.slider("Rotation speed", 0.1, 1.0, 0.4)
     with c6:
-        show_surface = st.checkbox("Show surface", value=True)
+        opacity = st.slider("Transparency", 0.2, 1.0, 0.95)
 
-    b1, b2, b3, b4 = st.columns(4)
-    zoom_in = b1.button("🔍 Zoom in")
-    zoom_out = b2.button("🔎 Zoom out")
-    reset_view = b3.button("🔁 Reset view")
-    center_view = b4.button("🎯 Center")
+    z1, z2, z3, z4 = st.columns(4)
+    zoom_in = z1.button("🔍 Zoom in")
+    zoom_out = z2.button("🔎 Zoom out")
+    reset_view = z3.button("🔁 Reset zoom")
+    center_view = z4.button("🎯 Center")
 
-    # ---- VIEWER ----
-    view = py3Dmol.view(width=1100, height=750)
+    # ---------------- CAMERA STATE ----------------
+    if "zoom_factor" not in st.session_state:
+        st.session_state.zoom_factor = 1.0
+
+    if zoom_in:
+        st.session_state.zoom_factor *= 1.15
+    if zoom_out:
+        st.session_state.zoom_factor /= 1.15
+    if reset_view:
+        st.session_state.zoom_factor = 1.0
+
+    # ---------------- CREATE VIEW ----------------
+    view = py3Dmol.view(width=1400, height=900)
     view.addModel(pdb_text, "pdb")
 
-    # Base style
-    if style == "cartoon":
-        view.setStyle({"cartoon": {"color": "lightgray"}})
-    elif style == "surface":
-        view.setStyle({"surface": {"opacity": 0.85, "color": "lightgray"}})
-    elif style == "stick":
-        view.setStyle({"stick": {"radius": 0.25}})
-    else:
-        view.setStyle({"sphere": {"scale": 0.35}})
-
-    # Lighting & quality
     view.setBackgroundColor("white")
-    view.setViewStyle({"style": "outline", "width": 0.06})
+    view.setViewStyle({"style": "outline", "width": 0.05})
+    view.setAmbientOcclusion(True)
 
-    if show_surface:
-        view.addSurface(py3Dmol.VDW, {"opacity": 0.25, "color": "white"})
+    # ---------------- BASE STYLE ----------------
+    if style == "cartoon":
+        view.setStyle({}, {"cartoon": {"color": "lightgray", "opacity": opacity}})
+    elif style == "surface":
+        view.setStyle({}, {"surface": {"opacity": opacity, "color": "lightgray"}})
+    elif style == "stick":
+        view.setStyle({}, {"stick": {"radius": 0.25}})
+    else:
+        view.setStyle({}, {"sphere": {"scale": 0.35}})
 
+    # ---------------- COLOR MAP ----------------
     scores = df["FinalScore"].values
     cons = df["Conservancy_%"].values
     smin, smax = scores.min(), scores.max()
     cmin, cmax = cons.min(), cons.max()
 
-    def score_color(x):
-        t = (x - smin) / (smax - smin + 1e-6)
-        r = int(255 * t)
-        b = int(255 * (1 - t))
-        return f"rgb({r},0,{b})"
+    def heat_color(t):
+        # Clamp
+        t = max(0.0, min(1.0, t))
 
-    def cons_color(x):
-        t = (x - cmin) / (cmax - cmin + 1e-6)
-        g = int(255 * t)
-        return f"rgb(0,{g},0)"
+        # 12-step scientific spectral gradient
+        colors = [
+            (0, 0, 80),      # deep navy
+            (0, 0, 255),     # blue
+            (0, 128, 255),   # sky blue
+            (0, 255, 255),   # cyan
+            (0, 255, 128),   # aqua-green
+            (0, 255, 0),     # green
+            (128, 255, 0),   # yellow-green
+            (255, 255, 0),   # yellow
+            (255, 180, 0),   # orange
+            (255, 100, 0),   # deep orange
+            (255, 0, 0),     # red
+            (128, 0, 0)      # dark red
+        ]
 
-    # ---- COLOR EPITOPES ----
+        n = len(colors) - 1
+        pos = t * n
+        i = int(pos)
+        f = pos - i
+
+        if i >= n:
+            return f"rgb{colors[-1]}"
+
+        c1 = colors[i]
+        c2 = colors[i + 1]
+
+        r = int(c1[0] + (c2[0] - c1[0]) * f)
+        g = int(c1[1] + (c2[1] - c1[1]) * f)
+        b = int(c1[2] + (c2[2] - c1[2]) * f)
+
+        return f"rgb({r},{g},{b})"
+
+    # ---------------- DRAW EPITOPES ----------------
     for _, r in df.iterrows():
         pep = r["Peptide"]
         if focus != "ALL" and pep != focus:
@@ -307,46 +342,46 @@ def show_structure_3d(pdb_text, df):
         end = int(r["Start"] + r["Length"] - 1)
 
         if color_mode == "FinalScore":
-            col = score_color(r["FinalScore"])
+            t = (r["FinalScore"] - smin) / (smax - smin + 1e-6)
         elif color_mode == "Conservancy_%":
-            col = cons_color(r["Conservancy_%"])
+            t = (r["Conservancy_%"] - cmin) / (cmax - cmin + 1e-6)
         else:
-            col = "orange"
+            t = 0.5
+
+        col = heat_color(t)
 
         view.addStyle(
             {"resi": list(range(start, end + 1))},
             {
-                "cartoon": {"color": col},
-                "stick": {"color": col, "radius": 0.3}
+                "cartoon": {"color": col, "opacity": 1.0},
+                "stick": {"color": col, "radius": 0.35}
             }
         )
 
-        if show_surface:
-            view.addSurface(
-                py3Dmol.VDW,
-                {"opacity": 0.65, "color": col},
-                {"resi": list(range(start, end + 1))}
-            )
+        # Floating label
+        mid = int((start + end) / 2)
+        view.addLabel(
+            f"{start}-{end}",
+            {
+                "fontSize": 14,
+                "backgroundColor": "white",
+                "fontColor": "black",
+                "inFront": True
+            },
+            {"resi": mid}
+        )
 
-    # ---- CAMERA ACTIONS ----
-    if reset_view:
-        view.zoomTo()
+    # ---------------- CAMERA ----------------
+    view.zoom(st.session_state.zoom_factor)
 
     if center_view:
         view.center()
 
-    if zoom_in:
-        view.zoom(1.3)
-
-    if zoom_out:
-        view.zoom(0.75)
-
     if auto_rotate:
         view.spin(True, rot_speed)
 
-    view.zoomTo()
-
-    components.html(view._make_html(), height=820, scrolling=False)
+    # ---------------- RENDER ----------------
+    components.html(view._make_html(), height=920, scrolling=False)
 
 # =========================
 # UI
