@@ -12,7 +12,6 @@ from matplotlib.backends.backend_pdf import PdfPages
 import shap
 import py3Dmol
 import streamlit.components.v1 as components
-import random
 
 # =========================
 # Page config
@@ -37,7 +36,7 @@ amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
 dipeptides = [a+b for a,b in product(amino_acids, repeat=2)]
 
 aa_weights = {
-"A": 89.1,"C":121.2,"D":133.1,"E":147.1,"F":165.2,"G":75.1,"H":155.2,
+"A":89.1,"C":121.2,"D":133.1,"E":147.1,"F":165.2,"G":75.1,"H":155.2,
 "I":131.2,"K":146.2,"L":131.2,"M":149.2,"N":132.1,"P":115.1,"Q":146.1,
 "R":174.2,"S":105.1,"T":119.1,"V":117.1,"W":204.2,"Y":181.2
 }
@@ -55,8 +54,7 @@ SIGNAL_PEPTIDES = {
 
 ADJUVANTS = {
     "None": "",
-    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK",
-    "50S ribosomal": "MARGKKIGYSGLKDHAR..."
+    "β-defensin": "GIINTLQKYYCRVRGGRCAVLSCLPKEEQIGKCSTRGRKCCRRK"
 }
 
 # =========================
@@ -67,20 +65,20 @@ def aa_composition(seq):
     return [seq.count(a)/L for a in amino_acids]
 
 def dipeptide_composition(seq):
-    total = len(seq) - 1
+    total = len(seq)-1
     counts = {dp:0 for dp in dipeptides}
     for i in range(total):
         dp = seq[i:i+2]
         if dp in counts:
             counts[dp] += 1
-    return [counts[dp]/total for dp in dipeptides] if total > 0 else [0]*400
+    return [counts[dp]/total for dp in dipeptides] if total>0 else [0]*400
 
 def physchem(seq):
-    L = len(seq)
-    mw = sum(aa_weights.get(a,0) for a in seq)
-    hyd = sum(hydro.get(a,0) for a in seq)/L
-    aromatic = sum(a in "FWY" for a in seq)/L
-    return mw, hyd, aromatic
+    L=len(seq)
+    mw=sum(aa_weights[a] for a in seq)
+    hydv=sum(hydro[a] for a in seq)/L
+    aromatic=sum(a in "FWY" for a in seq)/L
+    return mw, hydv, aromatic
 
 def extract_features(seq):
     aa = aa_composition(seq)
@@ -146,176 +144,75 @@ def population_coverage_proxy(seq):
     return "Narrow",0.3
 
 # =========================
-# 3D viewer
+# 3D Viewer
 # =========================
 def show_structure_3d_advanced(pdb_text, df):
     view = py3Dmol.view(width=1000, height=700)
     view.addModel(pdb_text, "pdb")
 
-    # -----------------------------
-    # UI controls
-    # -----------------------------
-    col1, col2, col3, col4 = st.columns(4)
+    style = st.selectbox("Style", ["cartoon","surface","stick","sphere"])
+    color_mode = st.selectbox("Color by", ["score","cell","conservancy","uniform"])
+    focus = st.selectbox("Focus epitope", ["ALL"] + df["Peptide"].tolist())
 
-    with col1:
-        style = st.selectbox("Render style", ["cartoon", "surface", "stick", "sphere", "ballstick"])
-    with col2:
-        color_mode = st.selectbox("Color by", ["score", "cell", "conservancy", "uniform"])
-    with col3:
-        bg = st.selectbox("Background", ["white", "black", "gray"])
-    with col4:
-        opacity = st.slider("Surface opacity", 0.1, 1.0, 0.85)
+    view.setStyle({"cartoon":{"color":"lightgray"}})
 
-    st.markdown("### 🎯 Epitope Focus")
-    ep_list = ["ALL"] + df["Peptide"].tolist()
-    focus = st.selectbox("Focus epitope", ep_list)
-
-    # -----------------------------
-    # Background
-    # -----------------------------
-    view.setBackgroundColor(bg)
-
-    # -----------------------------
-    # Base style
-    # -----------------------------
-    if style == "cartoon":
-        view.setStyle({"cartoon": {"color": "lightgray"}})
-    elif style == "surface":
-        view.setStyle({"surface": {"opacity": opacity, "color": "lightgray"}})
-    elif style == "stick":
-        view.setStyle({"stick": {}})
-    elif style == "sphere":
-        view.setStyle({"sphere": {"scale": 0.3}})
-    elif style == "ballstick":
-        view.setStyle({"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}})
-
-    # -----------------------------
-    # Color scaling
-    # -----------------------------
-    scores = df["FinalScore"].values
-    cons = df["Conservancy_%"].values
-
-    smin, smax = scores.min(), scores.max()
-    cmin, cmax = cons.min(), cons.max()
+    scores=df["FinalScore"].values
+    cons=df["Conservancy_%"].values
+    smin,smax=scores.min(),scores.max()
+    cmin,cmax=cons.min(),cons.max()
 
     def score_color(x):
-        t = (x - smin) / (smax - smin + 1e-6)
-        r = int(255 * t)
-        b = int(255 * (1 - t))
-        return f"rgb({r},0,{b})"
+        t=(x-smin)/(smax-smin+1e-6)
+        return f"rgb({int(255*t)},0,{int(255*(1-t))})"
 
     def cons_color(x):
-        t = (x - cmin) / (cmax - cmin + 1e-6)
-        g = int(255 * t)
-        return f"rgb(0,{g},0)"
+        t=(x-cmin)/(cmax-cmin+1e-6)
+        return f"rgb(0,{int(255*t)},0)"
 
-    cell_colors = {
-        "T-cell": "red",
-        "B-cell": "blue",
-        "Both": "purple"
-    }
+    cell_colors={"T-cell":"red","B-cell":"blue","Both":"purple"}
 
-    # -----------------------------
-    # Highlight epitopes
-    # -----------------------------
-    for _, r in df.iterrows():
-        pep = r["Peptide"]
-        start = int(r["Start"])
-        end = int(r["Start"] + r["Length"])
+    for _,r in df.iterrows():
+        pep=r["Peptide"]
+        if focus!="ALL" and pep!=focus: continue
 
-        if focus != "ALL" and pep != focus:
-            continue
+        s=int(r["Start"])
+        e=int(r["Start"]+r["Length"])
 
-        if color_mode == "score":
-            col = score_color(r["FinalScore"])
-        elif color_mode == "conservancy":
-            col = cons_color(r["Conservancy_%"])
-        elif color_mode == "cell":
-            col = cell_colors[r["Cell_Type"]]
-        else:
-            col = "orange"
+        if color_mode=="score": col=score_color(r["FinalScore"])
+        elif color_mode=="conservancy": col=cons_color(r["Conservancy_%"])
+        elif color_mode=="cell": col=cell_colors[r["Cell_Type"]]
+        else: col="orange"
 
-        sel = {"resi": list(range(start, end + 1))}
+        view.setStyle({"resi":list(range(s,e+1))},{"cartoon":{"color":col}})
 
-        if style == "cartoon":
-            view.setStyle(sel, {"cartoon": {"color": col}})
-        elif style == "surface":
-            view.setStyle(sel, {"surface": {"color": col, "opacity": opacity}})
-        elif style == "stick":
-            view.setStyle(sel, {"stick": {"color": col}})
-        elif style == "sphere":
-            view.setStyle(sel, {"sphere": {"color": col}})
-        elif style == "ballstick":
-            view.setStyle(sel, {"stick": {"color": col}, "sphere": {"color": col}})
-
-        # Label epitope
-        view.addLabel(
-            pep,
-            {"position": {"resi": start}, "backgroundColor": "black", "fontColor": "white"}
-        )
-
-    # -----------------------------
-    # Zoom behavior
-    # -----------------------------
-    if focus == "ALL":
-        view.zoomTo()
-    else:
-        r = df[df["Peptide"] == focus].iloc[0]
-        start = int(r["Start"])
-        end = int(r["Start"] + r["Length"])
-        view.zoomTo({"resi": list(range(start, end + 1))})
-
-    # -----------------------------
-    # Spin control
-    # -----------------------------
-    if st.checkbox("Auto rotate"):
-        view.spin(True)
-    else:
-        view.spin(False)
-
-    # -----------------------------
-    # Render
-    # -----------------------------
+    view.zoomTo()
     components.html(view._make_html(), height=750, scrolling=False)
 
 # =========================
-# Publication-grade construct plot
+# Vaccine construct plot
 # =========================
-def draw_vaccine_construct_figure(df, linker="GPGPG", signal="", adjuvant="", save_path=None):
-    plt.rcParams["font.family"] = "DejaVu Sans"
-    fig, ax = plt.subplots(figsize=(18, 4), dpi=300)
+def draw_vaccine_construct_figure(df, linker="GPGPG", signal="", adjuvant=""):
+    fig, ax = plt.subplots(figsize=(18,4), dpi=300)
+    colors={"T-cell":"#d62728","B-cell":"#1f77b4","Both":"#9467bd"}
 
-    colors = {"T-cell":"#d62728","B-cell":"#1f77b4","Both":"#9467bd"}
-    y=0.5; h=0.25; x=0
+    x=0; y=0.5; h=0.3
 
-    blocks=[]
-    if signal: blocks.append(("Signal", signal, "#2ca02c"))
-    if adjuvant: blocks.append(("Adjuvant", adjuvant, "#ff7f0e"))
+    if signal:
+        ax.add_patch(plt.Rectangle((x,y),len(signal),h,color="#2ca02c")); x+=len(signal)
+    if adjuvant:
+        ax.add_patch(plt.Rectangle((x,y),len(adjuvant),h,color="#ff7f0e")); x+=len(adjuvant)
 
     for i,r in df.iterrows():
-        blocks.append((r["Peptide"], r["Peptide"], colors[r["Cell_Type"]]))
-        if i!=df.index[-1]: blocks.append(("Linker", linker, "#7f7f7f"))
-
-    scores=df["FinalScore"].values; mn,mx=scores.min(),scores.max()
-
-    for label,seq,col in blocks:
-        L=len(seq)
-        alpha=0.9
-        if seq in df["Peptide"].values:
-            s=df[df["Peptide"]==seq]["FinalScore"].values[0]
-            alpha=0.4+0.6*((s-mn)/(mx-mn+1e-6))
-
-        ax.add_patch(plt.Rectangle((x,y),L,h,facecolor=col,edgecolor="black",alpha=alpha))
-        ax.text(x+L/2,y+h/2,seq[:10]+"…" if len(seq)>10 else seq,ha="center",va="center",fontsize=8,rotation=90,color="white")
+        L=len(r["Peptide"])
+        ax.add_patch(plt.Rectangle((x,y),L,h,color=colors[r["Cell_Type"]]))
+        ax.text(x+L/2,y+h/2,r["Peptide"],ha="center",va="center",rotation=90,fontsize=7,color="white")
         x+=L
+        if i!=df.index[-1]:
+            ax.add_patch(plt.Rectangle((x,y),len(linker),h,color="gray"))
+            x+=len(linker)
 
     ax.set_xlim(0,x); ax.set_ylim(0,1.2); ax.set_yticks([])
-    ax.set_title("Optimized Multi-Epitope Vaccine Construct",fontsize=18,fontweight="bold")
-    ax.set_xlabel("Amino acid position")
-
-    if save_path:
-        plt.savefig(save_path,dpi=600,bbox_inches="tight")
-
+    ax.set_title("Multi-Epitope Vaccine Construct Architecture")
     return fig
 
 # =========================
@@ -329,7 +226,7 @@ tabs = st.tabs(["Pipeline","SHAP","Vaccine","Landscape","3D","Export","Report"])
 # TAB 1 — PIPELINE
 # =========================
 with tabs[0]:
-    fasta_input = st.text_area("Paste FASTA (variants allowed):")
+    fasta_input = st.text_area("Paste FASTA:")
     min_len = st.slider("Min length",8,15,9)
     max_len = st.slider("Max length",9,25,15)
     top_n = st.selectbox("Top N",[10,20,50,100])
@@ -356,24 +253,18 @@ with tabs[0]:
 
         rows=[]
         for i,(pep,pos,ml) in enumerate(zip(peptides,positions,meanp)):
-            tox=toxicity_proxy(pep)
-            allerg=allergenicity_proxy(pep)
-            antig=antigenicity_proxy(pep)
-            cell=cell_type_proxy(pep)
             cons=conservancy_percent(pep,seqs)
             rob=robustness_score(pep,seqs)
             popc,pops=population_coverage_proxy(pep)
+            antig=antigenicity_proxy(pep)
 
             final=0.35*ml+0.25*(cons/100)+0.2*rob+0.1*pops+0.1*(antig/5)
 
-            rows.append([pep,pos,len(pep),ml,stdp[i],cons,rob,antig,popc,pops,final,tox,allerg,cell])
+            rows.append([pep,pos,len(pep),ml,stdp[i],cons,rob,antig,popc,pops,final,cell_type_proxy(pep)])
 
-        df=pd.DataFrame(rows,columns=[
-            "Peptide","Start","Length","ML_Mean","ML_Std","Conservancy_%","Robustness",
-            "Antigenicity","PopClass","PopScore","FinalScore","Toxicity","Allergenicity","Cell_Type"
-        ])
-
+        df=pd.DataFrame(rows,columns=["Peptide","Start","Length","ML","ML_std","Conservancy_%","Robustness","Antigenicity","PopClass","PopScore","FinalScore","Cell_Type"])
         df=df.sort_values("FinalScore",ascending=False).head(top_n)
+
         st.session_state["df"]=df
         st.session_state["X"]=X
         st.dataframe(df)
@@ -396,9 +287,9 @@ with tabs[1]:
 with tabs[2]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        linker="GPGPG"
         sig=st.selectbox("Signal",list(SIGNAL_PEPTIDES.keys()))
         adj=st.selectbox("Adjuvant",list(ADJUVANTS.keys()))
+        linker="GPGPG"
 
         construct = SIGNAL_PEPTIDES[sig] + ADJUVANTS[adj] + linker.join(df["Peptide"].tolist())
         st.code(construct)
@@ -418,98 +309,20 @@ with tabs[3]:
         st.pyplot(fig)
 
 # =========================
-# TAB 5 — 3D STRUCTURE
+# TAB 5 — 3D
 # =========================
 with tabs[4]:
-    st.subheader("🧬 Interactive 3D Protein Viewer")
+    pdb_file = st.file_uploader("Upload PDB", type=["pdb"])
+    if "df" in st.session_state and pdb_file:
+        show_structure_3d_advanced(pdb_file.read().decode("utf-8"), st.session_state["df"])
 
-    pdb_file = st.file_uploader("Upload PDB file", type=["pdb"])
-
-    if "df" in st.session_state and pdb_file is not None:
-        df = st.session_state["df"]
-        pdb_text = pdb_file.read().decode("utf-8")
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            style = st.selectbox("Style", ["cartoon", "surface", "stick", "sphere"])
-
-        with c2:
-            color_mode = st.selectbox("Color by", ["score", "cell", "conservancy", "uniform"])
-
-        with c3:
-            ep_list = ["ALL"] + df["Peptide"].tolist()
-            selected = st.selectbox("Focus epitope", ep_list)
-
-   def show_structure_3d_advanced(
-    pdb_text=pdb_text,
-    df=st.session_state["df"],
-    mode=selected,
-    style=style,
-    color_mode=color_mode
-)
-    import py3Dmol
-    import streamlit.components.v1 as components
-
-    view = py3Dmol.view(width=900, height=600)
-    view.addModel(pdb_text, "pdb")
-
-    # Base style
-    if style == "cartoon":
-        view.setStyle({"cartoon": {"color": "lightgray"}})
-    elif style == "surface":
-        view.setStyle({"surface": {"opacity": 0.9, "color": "lightgray"}})
-    elif style == "stick":
-        view.setStyle({"stick": {}})
-    elif style == "sphere":
-        view.setStyle({"sphere": {}})
-
-    scores = df["FinalScore"].values
-    mn, mx = scores.min(), scores.max()
-
-    def score_to_color(s):
-        x = (s - mn) / (mx - mn + 1e-6)
-        r = int(255 * x)
-        b = int(255 * (1 - x))
-        return f"rgb({r},0,{b})"
-
-    if mode != "ALL":
-        df = df[df["Peptide"] == mode]
-
-    for _, r in df.iterrows():
-        s = int(r["Start"])
-        e = int(r["Start"] + r["Length"])
-
-        if color_mode == "score":
-            col = score_to_color(r["FinalScore"])
-        elif color_mode == "cell":
-            col = {"T-cell": "red", "B-cell": "blue", "Both": "purple"}.get(r["Cell_Type"], "orange")
-        elif color_mode == "conservancy":
-            if r["Conservancy_%"] > 80:
-                col = "green"
-            elif r["Conservancy_%"] > 50:
-                col = "yellow"
-            else:
-                col = "red"
-        else:
-            col = "orange"
-
-        view.setStyle(
-            {"resi": list(range(s, e + 1))},
-            {style: {"color": col}}
-        )
-
-    view.zoomTo()
-    components.html(view._make_html(), height=650, scrolling=False)
-       
 # =========================
 # TAB 6 — EXPORT
 # =========================
 with tabs[5]:
     if "df" in st.session_state:
         df=st.session_state["df"]
-        csv=df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV",csv,"epitopes.csv")
+        st.download_button("Download CSV", df.to_csv(index=False), "epitopes.csv")
 
 # =========================
 # TAB 7 — REPORT
