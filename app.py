@@ -1268,17 +1268,35 @@ with tabs[6]:
         st.download_button("⬇️ Download FULL PROJECT ZIP", zip_bytes, "epitope_project_bundle.zip")
 
 # =========================
-# TAB 8 — REPORT
+# TAB — REPORT
 # =========================
 with tabs[7]:
-    st.header("📄 PDF Report")
-    if "df" in st.session_state:
-        if st.button("Generate PDF"):
-            df = st.session_state["df"]
-            fig, ax = plt.subplots(figsize=(6,4), dpi=200)
-            ax.scatter(df["Start"], df["FinalScore"])
-            with PdfPages("Report.pdf") as pdf:
-                pdf.savefig(fig)
+    st.header("📄 Full Scientific PDF Report")
 
-            with open("Report.pdf","rb") as f:
-                st.download_button("Download PDF", f, "Epitope_Report.pdf")
+    if "df" not in st.session_state:
+        st.info("Run the pipeline first.")
+    else:
+        if st.button("🛠️ Generate Full Report PDF"):
+            df = st.session_state["df"]
+
+            landscape_fig = st.session_state.get("landscape_fig", None)
+            shap_fig = st.session_state.get("shap_fig", None)
+            chem_fig = st.session_state.get("chem_fig", None)
+
+            pdf_bytes = build_full_pdf_report(
+                df,
+                landscape_fig=landscape_fig,
+                shap_fig=shap_fig,
+                chem_fig=chem_fig
+            )
+
+            st.session_state["final_pdf"] = pdf_bytes
+            st.success("✅ PDF report generated successfully!")
+
+        if "final_pdf" in st.session_state:
+            st.download_button(
+                "⬇️ Download Full Report PDF",
+                st.session_state["final_pdf"],
+                file_name="Epitope_Vaccine_Report.pdf",
+                mime="application/pdf"
+            )
