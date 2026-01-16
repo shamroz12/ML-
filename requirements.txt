@@ -8,3 +8,4 @@ py3Dmol
 scikit-learn
 xgboost==2.0.3
 xlsxwriter
+reportlab
